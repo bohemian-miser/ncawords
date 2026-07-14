@@ -41,7 +41,8 @@ def main():
 
     model, d = load_model(a.weights)
     assert d.get("kind") == "word"
-    img = grow_word_image(model, d["text"], d["channel_n"], a.steps)
+    img = grow_word_image(model, d["text"], d["channel_n"], a.steps,
+                          seeds=d.get("seeds"))
     Path(a.img_dir).mkdir(exist_ok=True)
     img_path = Path(a.img_dir) / f"word_{d['text']}.png"
     img.save(img_path)

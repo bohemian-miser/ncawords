@@ -56,10 +56,19 @@ class NCA(nn.Module):
         return x * life
 
 
-def make_seed(size, channel_n=16, n=1):
-    """Single live cell in the center, hidden channels + alpha set to 1."""
+def make_seed(size, channel_n=16, n=1, pos=None):
+    """Single live cell with alpha + hidden channels set to 1.
+
+    `pos` is (x, y); defaults to the grid center. It matters: the seed is the
+    only living cell, and the loss is evaluated against the target at its
+    location. Seeding where the target is background (the hollow middle of a
+    C or an O) tells gradient descent to switch the seed off, which kills the
+    grid — an absorbing state training cannot escape. Callers should anchor
+    the seed on ink; see nca.train.ink_seed_pos.
+    """
     x = torch.zeros(n, channel_n, size, size)
-    x[:, 3:, size // 2, size // 2] = 1.0
+    sx, sy = pos if pos is not None else (size // 2, size // 2)
+    x[:, 3:, sy, sx] = 1.0
     return x
 
 

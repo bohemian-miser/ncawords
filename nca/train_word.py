@@ -51,7 +51,12 @@ def word_geometry(text):
 
 
 def render_word(text, glyph=22, font_path=FONT_PATH):
-    """Each char centered in its slot, per-char color, premultiplied RGBA."""
+    """Each char centered in its slot, per-char color, premultiplied RGBA.
+
+    Seed positions are then snapped onto ink within each character's slot:
+    a seed sitting on background (the hollow middle of C, O, 6, 0...) is
+    told by the loss to switch itself off, which kills the whole grid.
+    """
     w, h, seeds = word_geometry(text)
     font = ImageFont.truetype(font_path, glyph)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -63,11 +68,24 @@ def render_word(text, glyph=22, font_path=FONT_PATH):
                   font=font, fill=char_color(ch) + (255,))
     arr = np.asarray(img, dtype=np.float32) / 255.0
     arr[..., :3] *= arr[..., 3:]
-    return arr.transpose(2, 0, 1), seeds  # [4, H, W]
+    target = arr.transpose(2, 0, 1)  # [4, H, W]
+
+    from nca.train import ink_seed_pos
+    tt = torch.from_numpy(target)
+    for i, s in enumerate(seeds):
+        x0 = MARGIN + PITCH * i
+        sx, sy = ink_seed_pos(tt, region=(x0, x0 + PITCH))
+        s["x"], s["y"] = sx, sy
+    return target, seeds
 
 
-def make_word_seed(text, channel_n=16, n=1):
-    w, h, seeds = word_geometry(text)
+def make_word_seed(text, channel_n=16, n=1, seeds=None, glyph=22):
+    """One seed per character. `seeds` must be the ink-anchored positions from
+    render_word (or a weight file); recomputing slot centers here would seed
+    hollow glyphs on background and kill the grid."""
+    w, h, _ = word_geometry(text)
+    if seeds is None:
+        _, seeds = render_word(text, glyph)
     x = torch.zeros(n, channel_n, h, w)
     for s in seeds:
         x[:, 3:, s["y"], s["x"]] = 1.0
@@ -88,7 +106,9 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
     sched = torch.optim.lr_scheduler.MultiStepLR(
         opt, milestones=[int(steps * 0.7)], gamma=0.1)
 
-    seed = make_word_seed(text, channel_n)
+    seed = make_word_seed(text, channel_n, seeds=seeds)
+    print(f"[{text}] seeds (ink-anchored): "
+          f"{[(s['char'], s['x'], s['y']) for s in seeds]}", flush=True)
     pool = SamplePool(seed, pool_size)
     h, w = seed.shape[2], seed.shape[3]
 
@@ -131,9 +151,9 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
     return model
 
 
-def grow_word_image(model, text, channel_n, n_steps=80, upscale=4):
+def grow_word_image(model, text, channel_n, n_steps=80, upscale=4, seeds=None):
     with torch.no_grad():
-        x = make_word_seed(text, channel_n)
+        x = make_word_seed(text, channel_n, seeds=seeds)
         x = model(x, steps=n_steps)
     img = to_rgb(x)[0].clamp(0, 1).permute(1, 2, 0).numpy()
     im = Image.fromarray((img * 255).astype(np.uint8))

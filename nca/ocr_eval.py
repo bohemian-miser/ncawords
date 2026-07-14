@@ -35,13 +35,24 @@ def load_model(path):
     return model, d
 
 
-def grow_image(model, grid, steps=96, upscale=4):
+def grow_image(model, grid, steps=96, upscale=4, seed_pos=None):
+    """Grow from the seed the model was TRAINED on (see train.ink_seed_pos);
+    growing a letter model from the grid center instead is a different
+    initial condition and can simply die."""
     with torch.no_grad():
-        x = make_seed(grid, model.channel_n)
+        x = make_seed(grid, model.channel_n, pos=seed_pos)
         x = model(x, steps=steps)
     img = to_rgb(x)[0].clamp(0, 1).permute(1, 2, 0).numpy()
     img = Image.fromarray((img * 255).astype(np.uint8))
     return img.resize((grid * upscale,) * 2, Image.LANCZOS)
+
+
+def seed_pos_of(d):
+    """Seed (x, y) recorded in a weight file, or the center for old files."""
+    seeds = d.get("seeds")
+    if seeds:
+        return (seeds[0]["x"], seeds[0]["y"])
+    return (d["grid"] // 2, d["grid"] // 2)
 
 
 def ocr_char(img, threshold=235):
@@ -75,7 +86,7 @@ def main():
     results = []
     for wpath in a.weights:
         model, d = load_model(wpath)
-        img = grow_image(model, d["grid"], a.steps)
+        img = grow_image(model, d["grid"], a.steps, seed_pos=seed_pos_of(d))
         Path(a.img_dir).mkdir(exist_ok=True)
         img_path = Path(a.img_dir) / f"{ord(d['char']):04x}.png"
         img.save(img_path)

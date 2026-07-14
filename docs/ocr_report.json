@@ -1,12 +1,36 @@
 {
- "ok": 1,
- "total": 4,
+ "ok": 14,
+ "total": 16,
  "results": [
   {
+   "char": "A",
+   "ocr": "A",
+   "ok": true,
+   "img": "grown/0041.png"
+  },
+  {
+   "char": "B",
+   "ocr": "B",
+   "ok": true,
+   "img": "grown/0042.png"
+  },
+  {
    "char": "C",
-   "ocr": "",
+   "ocr": "Cc",
    "ok": false,
    "img": "grown/0043.png"
+  },
+  {
+   "char": "D",
+   "ocr": "D",
+   "ok": true,
+   "img": "grown/0044.png"
+  },
+  {
+   "char": "E",
+   "ocr": "E",
+   "ok": true,
+   "img": "grown/0045.png"
   },
   {
    "char": "F",
@@ -16,15 +40,63 @@
   },
   {
    "char": "G",
-   "ocr": "3",
-   "ok": false,
+   "ocr": "G",
+   "ok": true,
    "img": "grown/0047.png"
   },
   {
-   "char": "R",
+   "char": "H",
+   "ocr": "H",
+   "ok": true,
+   "img": "grown/0048.png"
+  },
+  {
+   "char": "I",
    "ocr": "",
    "ok": false,
-   "img": "grown/0052.png"
+   "img": "grown/0049.png"
+  },
+  {
+   "char": "J",
+   "ocr": "j",
+   "ok": true,
+   "img": "grown/004a.png"
+  },
+  {
+   "char": "K",
+   "ocr": "K",
+   "ok": true,
+   "img": "grown/004b.png"
+  },
+  {
+   "char": "L",
+   "ocr": "L",
+   "ok": true,
+   "img": "grown/004c.png"
+  },
+  {
+   "char": "M",
+   "ocr": "M",
+   "ok": true,
+   "img": "grown/004d.png"
+  },
+  {
+   "char": "N",
+   "ocr": "N",
+   "ok": true,
+   "img": "grown/004e.png"
+  },
+  {
+   "char": "O",
+   "ocr": "O",
+   "ok": true,
+   "img": "grown/004f.png"
+  },
+  {
+   "char": "P",
+   "ocr": "P",
+   "ok": true,
+   "img": "grown/0050.png"
   }
  ]
 }
