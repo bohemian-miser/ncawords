@@ -94,7 +94,7 @@ const loadWordWeights = (text) =>
  * ------------------------------------------------------------------ */
 
 function sanitize(text) {
-  return text.toUpperCase().replace(/[^A-Z ]/g, '').slice(0, MAX_LEN);
+  return text.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, MAX_LEN);
 }
 
 function makeGap() {
@@ -446,7 +446,11 @@ function buildWordFigure() {
   }
   buildWordFigure.setActivePill = setActivePill;
 
-  selectWord(availableWords[0]);
+  // Show the most impressive model first: the longest string one network has
+  // learned to grow (COMP6441 over CO), not whatever sorts first.
+  const headline = availableWords.reduce(
+    (best, t) => (t.length > best.length ? t : best), availableWords[0]);
+  selectWord(headline);
 }
 
 async function selectWord(text) {

@@ -34,9 +34,9 @@
 <div class="figure-column" id="hero">
   <figure id="hero-figure">
     <div class="hero-input-row">
-      <input id="hero-text" type="text" value="GROW" maxlength="16"
+      <input id="hero-text" type="text" value="COMP6441" maxlength="16"
              autocomplete="off" autocapitalize="characters" spellcheck="false"
-             aria-label="Text to grow (A–Z and space)">
+             aria-label="Text to grow (A–Z, 0–9 and space)">
     </div>
     <p class="hero-hint" id="hero-hint" aria-live="polite"></p>
     <div id="letter-row" aria-label="Growing letters"></div>
@@ -56,7 +56,7 @@
       </span>
     </div>
     <figcaption>
-      <b>Type something</b> (A&ndash;Z and space), then interfere:
+      <b>Type something</b> (A&ndash;Z, 0&ndash;9 and space), then interfere:
       <b>click or drag</b> on a letter to carve a hole in it and watch the
       cells regrow what was lost. <b>Double-click</b> a letter to restart it
       from a single seed. Every canvas is a live 32&times;32 cellular
@@ -81,7 +81,7 @@
       <b>One network, one grid.</b> Unlike the demo above, where every letter
       is its own automaton on its own canvas, everything here is grown by a
       <em>single</em> learned rule on one shared grid. Each seed cell starts
-      with a different 5-bit letter code written into its hidden channels,
+      with a different 6-bit character code written into its hidden channels,
       and the same network decodes that code and unfolds the right glyph
       from it. Where glyphs meet, the letters must negotiate their
       boundaries with one another &mdash; there are no canvas walls to keep
@@ -101,9 +101,10 @@
     entire network was trained for nothing else. The word models drop that
     crutch: one network serves every letter in the word, so identity has to
     live somewhere other than the weights &mdash; and it lives in the seed.
-    Five hidden channels of each starting cell hold a 5-bit code, and that
+    Six hidden channels of each starting cell hold a 6-bit code &mdash; enough
+    to name any of the 36 characters, letters and digits alike &mdash; and that
     is the <em>only</em> difference between a seed destined to become a
-    <em>G</em> and one destined to become an <em>O</em>: five numbers in the
+    <em>C</em> and one destined to become a <em>6</em>: six numbers in the
     initial state. The update rule is the same everywhere on the grid, at
     every step.
   </p>
