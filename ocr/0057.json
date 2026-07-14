@@ -1,0 +1,14 @@
+{
+ "ok": 1,
+ "strict": 1,
+ "total": 1,
+ "results": [
+  {
+   "char": "W",
+   "ocr": "W",
+   "ok": true,
+   "strict": true,
+   "img": "grown/0057.png"
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 {
- "ok": 33,
- "total": 35,
+ "ok": 34,
+ "total": 36,
  "results": [
   {
    "char": "0",
@@ -225,6 +225,13 @@
    "ok": true,
    "strict": true,
    "img": "grown/0056.png"
+  },
+  {
+   "char": "W",
+   "ocr": "W",
+   "ok": true,
+   "strict": true,
+   "img": "grown/0057.png"
   },
   {
    "char": "X",
