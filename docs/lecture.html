@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COMP6441 — Growing Neural Cellular Automata</title>
 <meta name="description" content="One neural cellular automaton grows a whole string from seed cells. Wound it and it grows back.">
-<link rel="stylesheet" href="lecture.css">
+<link rel="stylesheet" href="lecture.css?v=3">
 </head>
 <body>
 
@@ -35,6 +35,16 @@
   <span class="keys">space play/pause &middot; R reset &middot; D damage &middot; F fullscreen</span>
 </p>
 
-<script type="module" src="lecture.js"></script>
+<script>
+// Surface any failure on the page instead of leaving a blank projector.
+window.addEventListener('error', (e) => {
+  const el = document.getElementById('error');
+  if (!el) return;
+  document.getElementById('paper').hidden = true;
+  el.hidden = false;
+  el.textContent = `Error: ${e.message || e.error}`;
+});
+</script>
+<script type="module" src="lecture.js?v=3"></script>
 </body>
 </html>

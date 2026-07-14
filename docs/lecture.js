@@ -201,7 +201,12 @@ async function boot() {
     return;
   }
 
-  const made = createCA(weights);
+  // Force the CPU engine. This grid is 216x32 and runs at a few steps per
+  // second, which costs a CPU almost nothing — while the WebGL path can only
+  // be tested on real hardware (headless browsers have no float render
+  // targets, so it silently falls back to CPU there anyway). Not worth
+  // risking a blank projector for a speedup nobody needs.
+  const made = createCA(weights, { forceCPU: true });
   ca = made.ca;
   mode = made.mode;
   ca.text = weights.text || weights.char || '';
