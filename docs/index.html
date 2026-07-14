@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Tiny neural cellular automata trained to grow letter glyphs from a single seed pixel — a reimplementation of Growing Neural Cellular Automata (Distill, 2020) for text.">
+<title>Growing Neural Cellular Automata for Text</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Interactive article</p>
+    <h1>Growing Neural Cellular Automata for Text</h1>
+    <p class="subtitle">
+      A reimplementation of the Distill article <em>Growing Neural Cellular
+      Automata</em> in which the organisms being grown are not lizards or
+      butterflies but letter glyphs: each character below unfolds from a
+      single seed pixel, guided only by a tiny neural network that every
+      cell runs on its own 3&times;3 neighborhood.
+    </p>
+    <div class="byline">
+      A reimplementation of Mordvintsev&nbsp;et&nbsp;al.,
+      <a href="https://distill.pub/2020/growing-ca/">Growing Neural Cellular Automata</a>
+      (Distill, 2020) &mdash; reference code at
+      <a href="https://github.com/google-research/self-organising-systems">google-research/self-organising-systems</a>
+      &mdash; trained from scratch on letter glyphs.
+    </div>
+  </div>
+</header>
+
+<!-- ============================ HERO ============================ -->
+<div class="figure-column" id="hero">
+  <figure id="hero-figure">
+    <div class="hero-input-row">
+      <input id="hero-text" type="text" value="GROW" maxlength="16"
+             autocomplete="off" autocapitalize="characters" spellcheck="false"
+             aria-label="Text to grow (A–Z and space)">
+    </div>
+    <p class="hero-hint" id="hero-hint" aria-live="polite"></p>
+    <div id="letter-row" aria-label="Growing letters"></div>
+    <div class="hero-controls">
+      <button id="btn-play" aria-label="Play or pause">Pause</button>
+      <button id="btn-step" aria-label="Advance one step">Step</button>
+      <button id="btn-reset" aria-label="Reset all letters">Reset</button>
+      <button id="btn-damage" aria-label="Damage a random letter">Damage random</button>
+      <span class="speed-group">
+        <label for="speed">speed</label>
+        <input id="speed" type="range" min="-2" max="2" step="0.25" value="0">
+        <span id="speed-label">1&times;</span>
+      </span>
+      <span class="status-group">
+        <span>step <span id="step-counter">0</span></span>
+        <span id="engine-mode"></span>
+      </span>
+    </div>
+    <figcaption>
+      <b>Type something</b> (A&ndash;Z and space), then interfere:
+      <b>click or drag</b> on a letter to carve a hole in it and watch the
+      cells regrow what was lost. <b>Double-click</b> a letter to restart it
+      from a single seed. Every canvas is a live 32&times;32 cellular
+      automaton &mdash; nothing here is a recording.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ===================== WORD: ONE GRID, ONE WORD ===================== -->
+<div class="figure-column" id="word-figure-wrap" hidden>
+  <figure id="word-figure">
+    <p class="figure-title">One grid, one word</p>
+    <div class="word-toolbar">
+      <span class="word-toolbar-label">word</span>
+      <div id="word-pills" role="group" aria-label="Choose a word model"></div>
+    </div>
+    <div class="word-canvas-wrap">
+      <canvas id="word-canvas" aria-label="A word growing on a single shared grid"></canvas>
+    </div>
+    <p class="figure-note" id="word-note" hidden></p>
+    <figcaption>
+      <b>One network, one grid.</b> Unlike the demo above, where every letter
+      is its own automaton on its own canvas, everything here is grown by a
+      <em>single</em> learned rule on one shared grid. Each seed cell starts
+      with a different 5-bit letter code written into its hidden channels,
+      and the same network decodes that code and unfolds the right glyph
+      from it. Where glyphs meet, the letters must negotiate their
+      boundaries with one another &mdash; there are no canvas walls to keep
+      them apart. <b>Click or drag</b> to damage, <b>double-click</b> to
+      reset; playback follows the controls in the figure above.
+    </figcaption>
+  </figure>
+</div>
+
+<main class="article-column">
+
+<!-- ===================== SEED CONDITIONING ===================== -->
+<section id="word-section" hidden>
+  <h2>Seeds that carry their name</h2>
+  <p>
+    In the headline demo, an <em>A</em> grows into an <em>A</em> because its
+    entire network was trained for nothing else. The word models drop that
+    crutch: one network serves every letter in the word, so identity has to
+    live somewhere other than the weights &mdash; and it lives in the seed.
+    Five hidden channels of each starting cell hold a 5-bit code, and that
+    is the <em>only</em> difference between a seed destined to become a
+    <em>G</em> and one destined to become an <em>O</em>: five numbers in the
+    initial state. The update rule is the same everywhere on the grid, at
+    every step.
+  </p>
+  <p>
+    Training turns that rule into a decoder. It has to read the code off the
+    growing tissue, keep relaying the identity outward as the pattern
+    expands, and steer local growth accordingly &mdash; while also handling
+    collisions where neighboring letters run into each other. This is what
+    makes &ldquo;a word in one picture&rdquo; possible: not independent
+    canvases stitched side by side, but one substrate on which
+    differently-labeled colonies grow together and settle their borders.
+  </p>
+</section>
+
+<!-- ============================ WHAT ============================ -->
+<section>
+  <h2>What is this?</h2>
+  <p>
+    An embryo starts as one cell, yet reliably ends up with a spine, ten
+    fingers, and a face in roughly the right places. No cell is in charge of
+    that outcome. Each one reads chemical signals from its immediate
+    neighbors, consults the same genome as everyone else, and acts locally
+    &mdash; and out of billions of these myopic decisions a global body plan
+    emerges, one robust enough to heal when injured.
+  </p>
+  <p>
+    The Distill article <em>Growing Neural Cellular Automata</em> distilled
+    this idea into a delightfully small experiment: a grid of pixels, each
+    running an identical learned rule that can only see its 3&times;3
+    neighborhood, trained so that a single seed pixel grows into a target
+    image. This page repeats that experiment with a different kind of
+    organism &mdash; the alphabet. Each letter above began as one live cell
+    in the middle of an empty 32&times;32 grid. No cell knows where it sits,
+    how big the grid is, or what an <em>A</em> looks like. There is no
+    blueprint being copied and no coordinate system to consult; the shape is
+    a negotiated agreement among neighbors. That the negotiation ends in a
+    crisp glyph &mdash; and resumes correctly after you tear a chunk out
+    &mdash; is the entire trick.
+  </p>
+</section>
+
+<!-- ============================ MODEL ============================ -->
+<section>
+  <h2>The model</h2>
+  <p>
+    Every cell carries a state vector of 12 numbers. The first three are
+    RGB, the fourth is an &ldquo;aliveness&rdquo; alpha, and the remaining
+    eight are hidden channels the cell may use however it likes &mdash; in
+    practice they become an improvised chemical signaling system. A cell
+    counts as alive when any cell in its 3&times;3 neighborhood has alpha
+    above 0.1; everything else is dead and holds hard zeros.
+  </p>
+  <p>
+    One update step works like this. First, <em>perception</em>: each
+    channel is filtered with a fixed identity kernel plus fixed Sobel-x and
+    Sobel-y kernels, giving the cell a 36-number summary of its
+    surroundings &mdash; its own state plus local gradients. That vector
+    passes through two 1&times;1 convolutions: a dense layer with 64 units
+    and a ReLU, then a linear layer back down to 12 numbers, initialized to
+    zero so that the untrained network does nothing at all. The output is a
+    <em>residual</em> update, added to the cell&rsquo;s current state.
+  </p>
+  <p>
+    Two details do a surprising amount of work. Updates are
+    <em>stochastic</em>: each cell fires with probability 0.5 per step, so
+    there is no global clock to hide behind. And after every step the alive
+    mask is re-applied, so a cell can only stay alive by keeping the
+    neighborhood convinced. The whole rule is about five thousand
+    parameters &mdash; one small MLP per letter, stamped onto every cell.
+  </p>
+</section>
+
+<div class="figure-column">
+  <figure>
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 880 312" role="img"
+           aria-label="Architecture of the per-cell update rule: 3 by 3 neighborhood, perception with identity and Sobel filters, dense layer with 64 ReLU units, dense layer to 12 outputs, stochastic gating, residual addition, and alive masking.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="dg-arrowhead"></path>
+          </marker>
+        </defs>
+
+        <!-- row 1: neighborhood -> perception -> dense 64 -> dense 12 -->
+        <g>
+          <!-- 3x3 neighborhood icon -->
+          <g transform="translate(18,34)">
+            <rect x="0"  y="0"  width="24" height="24" class="dg-box"></rect>
+            <rect x="26" y="0"  width="24" height="24" class="dg-box"></rect>
+            <rect x="52" y="0"  width="24" height="24" class="dg-box"></rect>
+            <rect x="0"  y="26" width="24" height="24" class="dg-box"></rect>
+            <rect x="26" y="26" width="24" height="24" class="dg-box dg-accent" stroke-width="2"></rect>
+            <rect x="52" y="26" width="24" height="24" class="dg-box"></rect>
+            <rect x="0"  y="52" width="24" height="24" class="dg-box"></rect>
+            <rect x="26" y="52" width="24" height="24" class="dg-box"></rect>
+            <rect x="52" y="52" width="24" height="24" class="dg-box"></rect>
+          </g>
+          <text x="56" y="128" font-size="13" font-weight="600" text-anchor="middle">3&#215;3 neighborhood</text>
+          <text x="56" y="144" font-size="11" class="dg-sub" text-anchor="middle">12 channels per cell</text>
+
+          <path d="M 100 72 H 152" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <rect x="156" y="34" width="176" height="76" rx="8" class="dg-box"></rect>
+          <text x="244" y="66" font-size="13" font-weight="600" text-anchor="middle">Perception</text>
+          <text x="244" y="84" font-size="11" class="dg-sub" text-anchor="middle">identity + Sobel-x + Sobel-y</text>
+          <text x="244" y="99" font-size="11" class="dg-sub" text-anchor="middle">fixed, not learned</text>
+
+          <path d="M 332 72 H 396" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="364" y="62" font-size="11" class="dg-sub" text-anchor="middle">36</text>
+
+          <rect x="400" y="34" width="150" height="76" rx="8" class="dg-box"></rect>
+          <text x="475" y="66" font-size="13" font-weight="600" text-anchor="middle">Dense 64</text>
+          <text x="475" y="84" font-size="11" class="dg-sub" text-anchor="middle">1&#215;1 conv, ReLU</text>
+
+          <path d="M 550 72 H 614" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="582" y="62" font-size="11" class="dg-sub" text-anchor="middle">64</text>
+
+          <rect x="618" y="34" width="150" height="76" rx="8" class="dg-box"></rect>
+          <text x="693" y="66" font-size="13" font-weight="600" text-anchor="middle">Dense 12</text>
+          <text x="693" y="84" font-size="11" class="dg-sub" text-anchor="middle">1&#215;1 conv, zero-init</text>
+        </g>
+
+        <!-- connector down to row 2 -->
+        <path d="M 693 110 V 148 H 244 V 178" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+        <text x="468" y="141" font-size="11" class="dg-sub" text-anchor="middle">&#916;state (12)</text>
+
+        <!-- row 2: stochastic gate -> residual add -> alive mask -->
+        <g>
+          <rect x="156" y="182" width="176" height="76" rx="8" class="dg-box"></rect>
+          <text x="244" y="214" font-size="13" font-weight="600" text-anchor="middle">Stochastic gate</text>
+          <text x="244" y="232" font-size="11" class="dg-sub" text-anchor="middle">each cell fires with p = 0.5,</text>
+          <text x="244" y="247" font-size="11" class="dg-sub" text-anchor="middle">otherwise &#916; is dropped</text>
+
+          <path d="M 332 220 H 396" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <rect x="400" y="182" width="150" height="76" rx="8" class="dg-box"></rect>
+          <text x="475" y="214" font-size="13" font-weight="600" text-anchor="middle">Residual add</text>
+          <text x="475" y="233" font-size="11" class="dg-sub" text-anchor="middle">state &#8592; state + &#916;</text>
+
+          <path d="M 550 220 H 614" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <rect x="618" y="182" width="176" height="76" rx="8" class="dg-box dg-accent" stroke-width="1.5"></rect>
+          <text x="706" y="214" font-size="13" font-weight="600" text-anchor="middle">Alive masking</text>
+          <text x="706" y="232" font-size="11" class="dg-sub" text-anchor="middle">zero every cell with no</text>
+          <text x="706" y="247" font-size="11" class="dg-sub" text-anchor="middle">neighbor above &#945; &gt; 0.1</text>
+
+          <path d="M 706 258 V 288" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="706" y="304" font-size="11" font-weight="600" text-anchor="middle">new state</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>
+      <b>The per-cell update rule.</b> Every cell applies this same
+      &asymp;5,000-parameter network at every step. Perception is fixed
+      (identity + Sobel filters over the 12 channels); only the two dense
+      layers are learned. The zero-initialized output layer means training
+      starts from a rule that changes nothing.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ============================ TRAINING ============================ -->
+<section>
+  <h2>Training</h2>
+  <p>
+    Each character gets its own model. The target is that character rendered
+    in DejaVu Sans Bold onto the 32&times;32 grid, and the loss is plain
+    mean squared error between the target and the CA&rsquo;s visible
+    channels. What makes this trainable is that the rollout is
+    differentiable: we run the automaton for a random 36&ndash;56 steps and
+    backpropagate through every one of them, so gradient descent shapes not
+    a picture but a <em>process</em> that ends in the picture.
+  </p>
+  <p>
+    Trained naively from the seed, the CA learns to pass through the target
+    rather than stop at it &mdash; leave it running and the letter bloats
+    into noise. The fix is the <em>sample pool</em>: instead of always
+    starting from a seed, most training rollouts begin from the end state
+    of a previous rollout. Old, already-grown patterns keep re-entering
+    training, so any drift past the trained horizon gets punished, and
+    persistence becomes part of the objective. To get regeneration, we go
+    one step further and vandalize the pool: some samples have a disc of
+    cells zeroed out before the rollout, and the model is graded on the
+    repaired result. The same recipe also scales past single letters: the
+    word models above are trained as one network with a row of coded seeds
+    on one wide grid, and verified the same way &mdash; Tesseract has to
+    read the entire grown word back from a single screenshot.
+  </p>
+  <p>
+    All of this was trained from scratch on a Raspberry Pi 5, CPU only. At
+    five thousand parameters per letter, morphogenesis turns out to be a
+    remarkably affordable hobby.
+  </p>
+</section>
+
+<!-- ============================ OCR ============================ -->
+<section>
+  <h2>Does it actually write? OCR as a judge</h2>
+  <p>
+    A loss curve tells you the pixels are close to the target; it does not
+    tell you the result <em>reads</em> as a letter. So the pipeline includes
+    an independent judge with no stake in the outcome. After training, every
+    letter is grown from a single seed for about 80 steps, screenshotted,
+    and handed to Tesseract OCR &mdash; software that has never seen this
+    project and only knows what letters are supposed to look like. A letter
+    passes only if Tesseract reads back the character it was trained to be.
+  </p>
+  <p>
+    It is a pleasingly circular test: a neural network grows a glyph pixel
+    by pixel, and a completely different piece of machine vision confirms
+    the hallucination is legible. The grid below is generated from the
+    actual verification report &mdash; each thumbnail is a grown pattern,
+    with the intended character and Tesseract&rsquo;s verdict.
+  </p>
+</section>
+
+<div class="figure-column">
+  <figure id="ocr-figure">
+    <p id="ocr-summary"></p>
+    <div id="ocr-grid"></div>
+    <p class="figure-note" id="ocr-note" hidden>
+      The OCR verification report has not been generated yet &mdash; this
+      figure will populate once training and verification finish.
+    </p>
+    <figcaption>
+      <b>OCR verification.</b> Each thumbnail is a pattern grown from a
+      single seed for &asymp;80 steps. Below it: the intended character, what
+      Tesseract read, and the verdict.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ============================ TRY IT ============================ -->
+<section>
+  <h2>Try it</h2>
+  <p>
+    Scroll back up to the <a href="#hero">demo</a> and be cruel to it. Drag
+    a line straight through the middle of a letter: both halves will notice
+    the wound, regrow toward each other, and knit back into the glyph, even
+    though no cell has any idea a &ldquo;whole letter&rdquo; is the goal.
+    Cut off a serifless limb, delete the counter of an <em>O</em>, or mash
+    the damage button until the word is rubble &mdash; then just wait. The
+    same local rule that grew each letter also maintains it, indefinitely.
+    Growth, persistence, and repair were never three features; they are one
+    behavior, observed at three moments.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <div class="article-column">
+    <p>
+      This page reimplements
+      <a href="https://distill.pub/2020/growing-ca/">Mordvintsev, Randazzo, Niklasson &amp; Levin,
+      &ldquo;Growing Neural Cellular Automata&rdquo;, Distill, 2020</a>, with letter
+      glyphs as the target patterns. The original reference implementation lives in
+      <a href="https://github.com/google-research/self-organising-systems">google-research/self-organising-systems</a>
+      and is licensed under Apache&nbsp;2.0; the models here were trained from scratch
+      against freshly rendered glyph targets. All prose and code on this page are
+      original to this reimplementation.
+    </p>
+    <p>Grown on a Raspberry&nbsp;Pi. No GPUs were harmed &mdash; or used.</p>
+  </div>
+</footer>
+
+<noscript>
+  <div class="article-column" style="padding-bottom:2rem">
+    <p><em>The interactive figures on this page require JavaScript.</em></p>
+  </div>
+</noscript>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

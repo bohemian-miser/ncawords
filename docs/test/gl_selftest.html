@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>NCA GL self-test</title>
+<style>
+  body { font-family: monospace; margin: 2em; background: #f4f4f4; }
+  #result { font-size: 1.4em; font-weight: bold; margin-bottom: 1em; }
+  #result.pass { color: #0a7a0a; }
+  #result.fail { color: #c00000; }
+  .panes { display: flex; gap: 2em; }
+  figure { margin: 0; }
+  figcaption { text-align: center; margin-top: 0.4em; }
+  canvas { width: 320px; height: 320px; image-rendering: pixelated; border: 1px solid #999; background: #fff; }
+</style>
+</head>
+<body>
+<h1>nca.js GL vs CPU self-test</h1>
+<div id="result">running&hellip;</div>
+<div class="panes">
+  <figure><canvas id="cpuCanvas"></canvas><figcaption>CPU (30 steps, fireRate 1.0)</figcaption></figure>
+  <figure><canvas id="glCanvas"></canvas><figcaption id="glCaption">GL (30 steps, fireRate 1.0)</figcaption></figure>
+</div>
+<script type="module">
+import { CPUCA, createCA, compareGLvsCPU } from "../nca.js";
+
+const STEPS = 30;
+const resultEl = document.getElementById("result");
+
+function show(pass, text) {
+  resultEl.textContent = (pass ? "PASS" : "FAIL") + " — " + text;
+  resultEl.className = pass ? "pass" : "fail";
+}
+
+try {
+  const weights = await (await fetch("./dummy_0058.json")).json();
+  const G = weights.grid;
+
+  // Numeric comparison (both deterministic at fireRate 1.0).
+  let pass = false, msg;
+  try {
+    const { maxAbsDiff } = compareGLvsCPU(weights, STEPS);
+    pass = maxAbsDiff < 1e-2;
+    msg = `maxAbsDiff = ${maxAbsDiff.toExponential(3)} over ${STEPS} steps (threshold 1e-2)`;
+  } catch (e) {
+    msg = "compareGLvsCPU threw: " + e.message;
+  }
+  show(pass, msg);
+
+  // Visual side-by-side.
+  const cpuCanvas = document.getElementById("cpuCanvas");
+  const glCanvas = document.getElementById("glCanvas");
+  cpuCanvas.width = cpuCanvas.height = glCanvas.width = glCanvas.height = G;
+
+  const cpu = new CPUCA(weights);
+  cpu.reset();
+  for (let i = 0; i < STEPS; i++) cpu.step(1.0);
+  cpuCanvas.getContext("2d").putImageData(new ImageData(cpu.readRGBA(), G, G), 0, 0);
+
+  const { ca, mode } = createCA(weights);
+  if (mode === "gl") {
+    ca.reset();
+    for (let i = 0; i < STEPS; i++) ca.step(1.0);
+    ca.drawTo(glCanvas.getContext("2d"));
+  } else {
+    document.getElementById("glCaption").textContent = "GL unavailable (fell back to CPU)";
+  }
+} catch (e) {
+  show(false, "error: " + e.message);
+  console.error(e);
+}
+</script>
+</body>
+</html>
