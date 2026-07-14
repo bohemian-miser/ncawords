@@ -16,9 +16,12 @@
     <p class="subtitle">
       A reimplementation of the Distill article <em>Growing Neural Cellular
       Automata</em> in which the organisms being grown are not lizards or
-      butterflies but letter glyphs: each character below unfolds from a
-      single seed pixel, guided only by a tiny neural network that every
-      cell runs on its own 3&times;3 neighborhood.
+      butterflies but text. Every character below unfolds from a single seed
+      pixel, guided only by a tiny neural network that each cell runs on its
+      own 3&times;3 neighborhood &mdash; and in the first figure, a
+      <em>single</em> such network grows an entire string across one shared
+      grid, letters and digits alike, with nothing but a six-bit code in each
+      seed to say which character it should become.
     </p>
     <div class="byline">
       A reimplementation of Mordvintsev&nbsp;et&nbsp;al.,
