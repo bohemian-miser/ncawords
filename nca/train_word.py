@@ -1,15 +1,15 @@
 """Train ONE NCA that grows a whole multi-character string on a single grid.
 
 Each character gets its own seed cell, placed at the center of a fixed-pitch
-slot. Seeds are distinguished by a 5-bit binary code (the letter's alphabet
-index) written into hidden channels 4..8 at seed time; remaining hidden
+slot. Seeds are distinguished by a 6-bit binary code (the character's index
+in CHARSET) written into hidden channels 4..9 at seed time; remaining hidden
 channels are 1. The model must learn code -> glyph, so different seeds grow
-different letters while sharing one update rule.
+different characters while sharing one update rule.
 
-State layout (channel_n=16): 0-2 RGB, 3 alpha, 4-8 letter code, 9-15 free.
+State layout (channel_n=16): 0-2 RGB, 3 alpha, 4-9 char code, 10-15 free.
 
 Usage:
-  python -m nca.train_word --text GO --steps 1200 --out weights/word_GO.json
+  python -m nca.train_word --text COMP --steps 2500 --out weights/word_COMP.json
 """
 
 import argparse
@@ -29,13 +29,15 @@ PITCH = 24          # px per character slot
 MARGIN = 12         # left/right margin
 GRID_H = 32
 CODE_CH0 = 4        # first code channel
-CODE_BITS = 5
+CODE_BITS = 6       # 6 bits = 64 slots, enough for the 36-char set
+
+CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 
-def letter_code(ch):
-    """5-bit binary code for A..Z, as floats 0/1."""
-    i = ord(ch.upper()) - ord("A")
-    assert 0 <= i < 26, f"only A-Z supported, got {ch!r}"
+def char_code(ch):
+    """6-bit binary code for A-Z and 0-9, as floats 0/1."""
+    i = CHARSET.find(ch.upper())
+    assert i >= 0, f"unsupported character {ch!r} (allowed: {CHARSET})"
     return [(i >> b) & 1 for b in range(CODE_BITS)]
 
 
@@ -44,7 +46,7 @@ def word_geometry(text):
     seeds = []
     for i, ch in enumerate(text):
         seeds.append({"x": MARGIN + PITCH * i + PITCH // 2, "y": GRID_H // 2,
-                      "code": letter_code(ch), "char": ch})
+                      "code": char_code(ch), "char": ch})
     return w, GRID_H, seeds
 
 

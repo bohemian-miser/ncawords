@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
-import pytesseract
+from nca import tess
 
 from nca.model import NCA, make_seed, to_rgb
 
@@ -57,7 +57,7 @@ def ocr_char(img, threshold=235):
     bw = Image.fromarray(np.where(arr < threshold, 0, 255).astype(np.uint8))
     wl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
     for psm in (10, 8):
-        txt = pytesseract.image_to_string(
+        txt = tess.image_to_string(
             bw, config=f"--psm {psm} -c tessedit_char_whitelist={wl}").strip()
         if txt:
             return txt

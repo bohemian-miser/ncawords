@@ -10,20 +10,25 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-import pytesseract
+from nca import tess
 import torch
 
 from nca.ocr_eval import load_model
 from nca.train_word import grow_word_image
 
 
-def ocr_word(img):
+def ocr_word(img, threshold=235):
+    """OCR the whole picture as a single word.
+
+    Same "any visible ink" threshold as the per-letter judge (the render is
+    1-a+rgb on white, so gray < 235 means alpha above ~0.08).
+    """
     g = img.convert("L")
     arr = np.asarray(g)
-    bw = Image.fromarray(np.where(arr < 220, 0, 255).astype(np.uint8))
-    txt = pytesseract.image_to_string(
+    bw = Image.fromarray(np.where(arr < threshold, 0, 255).astype(np.uint8))
+    txt = tess.image_to_string(
         bw, config="--psm 8 -c tessedit_char_whitelist="
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
     return txt.strip()
 
 
