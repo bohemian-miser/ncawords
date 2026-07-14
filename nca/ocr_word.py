@@ -35,20 +35,38 @@ def ocr_word(img, threshold=235):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("weights")
-    p.add_argument("--steps", type=int, default=80)
+    p.add_argument("--steps", type=int, default=100)
+    p.add_argument("--trials", type=int, default=5,
+                   help="stochastic rollouts to judge; all must read back")
     p.add_argument("--img-dir", default="grown")
     a = p.parse_args()
 
     model, d = load_model(a.weights)
     assert d.get("kind") == "word"
-    img = grow_word_image(model, d["text"], d["channel_n"], a.steps,
-                          seeds=d.get("seeds"))
+    want = d["text"].upper()
     Path(a.img_dir).mkdir(exist_ok=True)
     img_path = Path(a.img_dir) / f"word_{d['text']}.png"
-    img.save(img_path)
-    got = ocr_word(img)
-    ok = got == d["text"].upper()
-    print(f"'{d['text']}' -> OCR '{got}' {'OK' if ok else 'FAIL'} ({img_path})")
+
+    # The CA is stochastic (cells fire with p=0.5), so every rollout grows
+    # slightly different stray pixels. Judging on ONE sample makes the verdict
+    # a coin flip on marginal models; sample several and report the rate.
+    results = []
+    for i in range(a.trials):
+        torch.manual_seed(1000 + i)
+        img = grow_word_image(model, d["text"], d["channel_n"], a.steps,
+                              seeds=d.get("seeds"))
+        got = ocr_word(img)
+        results.append(got)
+        if i == 0:
+            img.save(img_path)
+
+    n_ok = sum(g == want for g in results)
+    misreads = sorted({g for g in results if g != want})
+    ok = n_ok == a.trials
+    print(f"'{d['text']}' -> {n_ok}/{a.trials} rollouts read back exactly "
+          f"{'OK' if ok else 'FAIL'} ({img_path})")
+    if misreads:
+        print(f"  misreads: {misreads}")
     sys.exit(0 if ok else 1)
 
 

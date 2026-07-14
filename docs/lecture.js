@@ -21,7 +21,7 @@ const PREFERRED_WORD = 'COMP6441';   // if weights/word_COMP6441.json exists
 const DEFAULT_TARGET_STEPS = 120;    // "fully grown" — ?steps=N overrides
 const IDLE_STEPS_PER_SEC = 8;        // pace once growth is complete (stays alive / heals)
 const DAMAGE_RADIUS = 6;
-const HISTORY_BUDGET_BYTES = 96 << 20;   // ~96 MB ceiling for the snapshot ring
+const HISTORY_BUDGET_BYTES = 64 << 20;   // ~64 MB ceiling for the snapshot history
 const HISTORY_MIN_SNAPS = 48;
 const HISTORY_MAX_SNAPS = 400;
 const MAX_STEPS_PER_FRAME = 6;       // clamp catch-up bursts (tab was hidden, etc.)
@@ -255,9 +255,12 @@ function layout() {
  *  Stepping / pacing                                                  *
  * ------------------------------------------------------------------ */
 
+// Duration mode: spread TARGET_STEPS evenly over the chosen wall-clock window,
+// e.g. 120 steps / 20 min = 0.1 steps per second. Once grown, keep ticking at a
+// gentle idle rate so the pattern stays alive and can heal damage on demand.
 function stepsPerSecond() {
-  if (step >= TARGET_STEPS) return IDLE_STEPS_PER_SEC;   // grown: keep it alive
   if (els.mode.value === 'free') return parseFloat(els.speed.value) || 10;
+  if (step >= TARGET_STEPS) return IDLE_STEPS_PER_SEC;
   const minutes = parseFloat(els.duration.value) || 20;
   return TARGET_STEPS / (minutes * 60);
 }
@@ -273,6 +276,13 @@ function advance(n) {
 
 function frame(t) {
   rafId = null;
+  tick(t);
+  loop();
+}
+
+// One frame of work, given a real timestamp. Split out from the rAF callback so
+// pacing can be exercised with injected timestamps (see __lecture.tick).
+function tick(t) {
   if (!lastT) lastT = t;
   let dt = (t - lastT) / 1000;
   lastT = t;
@@ -295,7 +305,6 @@ function frame(t) {
   }
 
   if (dirty) { draw(); updateStatus(); }
-  loop();
 }
 
 function loop() {
@@ -361,12 +370,22 @@ function applyScrub() {
   return true;
 }
 
+// The timeline is the *growth* axis: 0 -> fully grown. Once grown the CA keeps
+// idling (so it stays alive and heals damage), but the bar stays pinned at 100%
+// rather than rescaling itself into uselessness over a 60-minute talk.
 function timelineMax() {
-  return Math.max(TARGET_STEPS, maxStep);
+  return TARGET_STEPS;
 }
 
 function nudge(delta) {
   setPlaying(false);
+  if (delta > 0 && step >= timelineMax()) {   // past "grown": just keep stepping
+    scrubTarget = null;
+    advance(delta);
+    draw();
+    updateStatus();
+    return;
+  }
   requestScrub(step + delta);
 }
 
@@ -640,7 +659,7 @@ async function boot() {
     get historyBytes() { return historyBytes(); },
     get scrubbing() { return scrubTarget !== null; },
     stepsPerSecond, requestScrub, advance, draw, updateStatus, damageRandom,
-    setPlaying, doReset,
+    setPlaying, doReset, tick,
     readState,
     checksum() {
       const s = readState();
@@ -658,8 +677,10 @@ async function boot() {
   window.__lectureReady = true;
 }
 
+// Only take over the screen for errors that happened *before* the CA came up.
+// Once it is running, a stray error must not blank the projector mid-talk.
 window.addEventListener('error', (e) => {
-  if (!els.error.hidden) return;
+  if (ca || !els.error.hidden) return;
   fail(`Script error: ${e.message}`);
 });
 
