@@ -86,14 +86,26 @@ class SamplePool:
         self.pool[idx] = x.detach()
 
 
-def damage_mask(n, size, device):
+def damage_mask(n, h, w=None, device="cpu", r_frac=(0.20, 0.55)):
     """1 outside a random circle, 0 inside (multiply to damage).
-    Center in middle half of grid, radius 0.1-0.4 of half-size."""
-    x = torch.linspace(-1, 1, size, device=device)
-    yy, xx = torch.meshgrid(x, x, indexing="ij")
-    cx = torch.rand(n, 1, 1, device=device) - 0.5
-    cy = torch.rand(n, 1, 1, device=device) - 0.5
-    r = torch.rand(n, 1, 1, device=device) * 0.3 + 0.1
+
+    Works in PIXEL space so it is correct on non-square grids: a word model is
+    216x32, and building the disc in normalized square coords put nearly every
+    circle off the strip — i.e. no damage at all, which quietly disables the
+    regeneration training this is here to do.
+
+    Centers land anywhere on the grid; radius is a fraction of the SHORT side
+    (the glyph height), so a hole always takes a real bite out of a character.
+    """
+    if w is None:
+        w = h
+    yy, xx = torch.meshgrid(
+        torch.arange(h, device=device, dtype=torch.float32),
+        torch.arange(w, device=device, dtype=torch.float32), indexing="ij")
+    cx = torch.rand(n, 1, 1, device=device) * w
+    cy = torch.rand(n, 1, 1, device=device) * h
+    lo, hi = r_frac
+    r = (torch.rand(n, 1, 1, device=device) * (hi - lo) + lo) * min(h, w)
     mask = ((xx[None] - cx) ** 2 + (yy[None] - cy) ** 2 >= r ** 2).float()
     return mask[:, None]
 
@@ -112,9 +124,9 @@ def is_dead(model, grid, channel_n, device, probe_steps=64, pos=None):
 
 
 def train(ch, steps=1000, grid=32, glyph=22, channel_n=12, hidden_n=64,
-          batch=8, pool_size=256, lr=2e-3, damage_n=1, ca_min=36, ca_max=56,
+          batch=8, pool_size=256, lr=2e-3, damage_n=3, ca_min=36, ca_max=56,
           device="cpu", log_every=100, out=None, snap_dir=None,
-          milestone=0.7, init=None, max_restarts=3):
+          milestone=0.7, init=None, max_restarts=3, damage_start=0.3):
     torch.manual_seed(ord(ch) + 1234)
     target = torch.from_numpy(render_glyph(ch, grid, glyph))[None].to(device)
     target = target.repeat(batch, 1, 1, 1)
@@ -156,8 +168,11 @@ def train(ch, steps=1000, grid=32, glyph=22, channel_n=12, hidden_n=64,
         x[:1] = seed.to(device)
         # Damage only once growth is established; carving holes in seeds from
         # step 0 pushes alpha under the alive threshold and invites death.
-        if damage_n and step > steps * 0.3:
-            x[-damage_n:] *= damage_mask(damage_n, grid, device)
+        # After that, the lowest-loss (best grown) samples get holes punched
+        # in them and the model is graded on the repair — this is the paper's
+        # "Regenerating" regime, and it is what makes the pattern robust.
+        if damage_n and step > steps * damage_start:
+            x[-damage_n:] *= damage_mask(damage_n, grid, grid, device)
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
