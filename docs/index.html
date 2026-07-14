@@ -30,9 +30,37 @@
   </div>
 </header>
 
-<!-- ============================ HERO ============================ -->
+<!-- ============ HEADLINE: ONE MODEL, ONE GRID, WHOLE STRING ============ -->
+<div class="figure-column" id="word-figure-wrap" hidden>
+  <figure id="word-figure">
+    <p class="figure-title">One model, one grid, the whole string</p>
+    <div class="word-toolbar">
+      <span class="word-toolbar-label">word</span>
+      <div id="word-pills" role="group" aria-label="Choose a word model"></div>
+    </div>
+    <div class="word-canvas-wrap">
+      <canvas id="word-canvas" aria-label="A word growing on a single shared grid"></canvas>
+    </div>
+    <p class="figure-note" id="word-note" hidden></p>
+    <figcaption>
+      <b>One network. One grid. Every character.</b> This is not a row of
+      canvases stitched together &mdash; it is a single learned rule running
+      over one shared grid, grown from one seed cell per character. The seeds
+      are identical except for a 6-bit code written into their hidden
+      channels, and the same network reads that code and unfolds the right
+      glyph from it: the weights that grow a <em>C</em> also grow a
+      <em>6</em>. Where glyphs meet there are no canvas walls, so neighboring
+      letters have to negotiate their own boundaries. <b>Click or drag</b> to
+      carve a hole and watch it heal; <b>double-click</b> to restart from
+      seeds. Playback uses the controls below.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ================= PER-LETTER DEMO (arbitrary text) ================= -->
 <div class="figure-column" id="hero">
   <figure id="hero-figure">
+    <p class="figure-title">One model per character, any text you like</p>
     <div class="hero-input-row">
       <input id="hero-text" type="text" value="COMP6441" maxlength="16"
              autocomplete="off" autocapitalize="characters" spellcheck="false"
@@ -56,37 +84,13 @@
       </span>
     </div>
     <figcaption>
+      Here each character is its <em>own</em> automaton on its own canvas &mdash;
+      36 separate models, one per character, so you can grow arbitrary text.
       <b>Type something</b> (A&ndash;Z, 0&ndash;9 and space), then interfere:
       <b>click or drag</b> on a letter to carve a hole in it and watch the
       cells regrow what was lost. <b>Double-click</b> a letter to restart it
       from a single seed. Every canvas is a live 32&times;32 cellular
       automaton &mdash; nothing here is a recording.
-    </figcaption>
-  </figure>
-</div>
-
-<!-- ===================== WORD: ONE GRID, ONE WORD ===================== -->
-<div class="figure-column" id="word-figure-wrap" hidden>
-  <figure id="word-figure">
-    <p class="figure-title">One grid, one word</p>
-    <div class="word-toolbar">
-      <span class="word-toolbar-label">word</span>
-      <div id="word-pills" role="group" aria-label="Choose a word model"></div>
-    </div>
-    <div class="word-canvas-wrap">
-      <canvas id="word-canvas" aria-label="A word growing on a single shared grid"></canvas>
-    </div>
-    <p class="figure-note" id="word-note" hidden></p>
-    <figcaption>
-      <b>One network, one grid.</b> Unlike the demo above, where every letter
-      is its own automaton on its own canvas, everything here is grown by a
-      <em>single</em> learned rule on one shared grid. Each seed cell starts
-      with a different 6-bit character code written into its hidden channels,
-      and the same network decodes that code and unfolds the right glyph
-      from it. Where glyphs meet, the letters must negotiate their
-      boundaries with one another &mdash; there are no canvas walls to keep
-      them apart. <b>Click or drag</b> to damage, <b>double-click</b> to
-      reset; playback follows the controls in the figure above.
     </figcaption>
   </figure>
 </div>
@@ -97,10 +101,11 @@
 <section id="word-section" hidden>
   <h2>Seeds that carry their name</h2>
   <p>
-    In the headline demo, an <em>A</em> grows into an <em>A</em> because its
-    entire network was trained for nothing else. The word models drop that
-    crutch: one network serves every letter in the word, so identity has to
-    live somewhere other than the weights &mdash; and it lives in the seed.
+    In the per-character demo, an <em>A</em> grows into an <em>A</em> because
+    its entire network was trained for nothing else. The model at the top of
+    this page drops that crutch: one network serves every character in the
+    string, so identity has to live somewhere other than the weights &mdash;
+    and it lives in the seed.
     Six hidden channels of each starting cell hold a 6-bit code &mdash; enough
     to name any of the 36 characters, letters and digits alike &mdash; and that
     is the <em>only</em> difference between a seed destined to become a
