@@ -95,8 +95,8 @@ def make_word_seed(text, channel_n=16, n=1, seeds=None, glyph=22):
 
 
 def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
-          batch=6, pool_size=128, lr=2e-3, damage_n=1, ca_min=36, ca_max=56,
-          log_every=100, out=None, snap_dir=None):
+          batch=6, pool_size=128, lr=2e-3, damage_n=2, ca_min=36, ca_max=56,
+          log_every=100, out=None, snap_dir=None, damage_start=0.3):
     torch.manual_seed(sum(map(ord, text)) + 99)
     tgt, seeds = render_word(text, glyph)
     target = torch.from_numpy(tgt)[None].repeat(batch, 1, 1, 1)
@@ -120,10 +120,12 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
                 .mean(dim=(1, 2, 3)).argsort(descending=True)
         x = x[loss_rank]
         x[:1] = seed
-        if damage_n:
-            # non-square grid: build mask on short axis scale
-            m = damage_mask(damage_n, max(h, w), "cpu")[:, :, :h, :w]
-            x[-damage_n:] *= m
+        # Punch holes in the best-grown samples once growth is established and
+        # grade the model on the repair (the paper's "Regenerating" regime).
+        # The mask is built in pixel space so it actually lands on this long,
+        # thin grid — the old square-mask-then-slice missed it almost entirely.
+        if damage_n and step > steps * damage_start:
+            x[-damage_n:] *= damage_mask(damage_n, h, w, "cpu")
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
