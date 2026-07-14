@@ -1,7 +1,67 @@
 {
- "ok": 14,
- "total": 16,
+ "ok": 30,
+ "total": 35,
  "results": [
+  {
+   "char": "0",
+   "ocr": "oO",
+   "ok": false,
+   "img": "grown/0030.png"
+  },
+  {
+   "char": "1",
+   "ocr": "1",
+   "ok": true,
+   "img": "grown/0031.png"
+  },
+  {
+   "char": "2",
+   "ocr": "2",
+   "ok": true,
+   "img": "grown/0032.png"
+  },
+  {
+   "char": "3",
+   "ocr": "3",
+   "ok": true,
+   "img": "grown/0033.png"
+  },
+  {
+   "char": "4",
+   "ocr": "4",
+   "ok": true,
+   "img": "grown/0034.png"
+  },
+  {
+   "char": "5",
+   "ocr": "5",
+   "ok": true,
+   "img": "grown/0035.png"
+  },
+  {
+   "char": "6",
+   "ocr": "6",
+   "ok": true,
+   "img": "grown/0036.png"
+  },
+  {
+   "char": "7",
+   "ocr": "7",
+   "ok": true,
+   "img": "grown/0037.png"
+  },
+  {
+   "char": "8",
+   "ocr": "e",
+   "ok": false,
+   "img": "grown/0038.png"
+  },
+  {
+   "char": "9",
+   "ocr": "9",
+   "ok": true,
+   "img": "grown/0039.png"
+  },
   {
    "char": "A",
    "ocr": "A",
@@ -97,6 +157,60 @@
    "ocr": "P",
    "ok": true,
    "img": "grown/0050.png"
+  },
+  {
+   "char": "Q",
+   "ocr": "Q",
+   "ok": true,
+   "img": "grown/0051.png"
+  },
+  {
+   "char": "R",
+   "ocr": "R",
+   "ok": true,
+   "img": "grown/0052.png"
+  },
+  {
+   "char": "S",
+   "ocr": "S",
+   "ok": true,
+   "img": "grown/0053.png"
+  },
+  {
+   "char": "T",
+   "ocr": "T",
+   "ok": true,
+   "img": "grown/0054.png"
+  },
+  {
+   "char": "U",
+   "ocr": "U",
+   "ok": true,
+   "img": "grown/0055.png"
+  },
+  {
+   "char": "V",
+   "ocr": "V",
+   "ok": true,
+   "img": "grown/0056.png"
+  },
+  {
+   "char": "X",
+   "ocr": "X",
+   "ok": true,
+   "img": "grown/0058.png"
+  },
+  {
+   "char": "Y",
+   "ocr": "Y",
+   "ok": true,
+   "img": "grown/0059.png"
+  },
+  {
+   "char": "Z",
+   "ocr": "Zz",
+   "ok": false,
+   "img": "grown/005a.png"
   }
  ]
 }

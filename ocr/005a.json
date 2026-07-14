@@ -1,0 +1,12 @@
+{
+ "ok": 0,
+ "total": 1,
+ "results": [
+  {
+   "char": "Z",
+   "ocr": "Zz",
+   "ok": false,
+   "img": "grown/005a.png"
+  }
+ ]
+}
