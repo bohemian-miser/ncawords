@@ -1,111 +1,39 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Growing Text — Lecture Mode</title>
-<meta name="description" content="Full-screen presenter view: one neural cellular automaton grows a whole string, paced to the length of your talk.">
+<title>COMP6441 — Growing Neural Cellular Automata</title>
+<meta name="description" content="One neural cellular automaton grows a whole string from seed cells. Wound it and it grows back.">
 <link rel="stylesheet" href="lecture.css">
 </head>
 <body>
 
-<main id="stage" aria-label="Neural cellular automaton growth stage">
+<main id="stage">
   <div id="paper">
-    <canvas id="ca-canvas" width="1" height="1"
-            aria-label="Growing neural cellular automaton"></canvas>
+    <canvas id="canvas" aria-label="A string growing from seed cells"></canvas>
   </div>
+  <p id="error" hidden></p>
 </main>
 
-<div id="error" hidden role="alert">
-  <h1>Nothing to grow</h1>
-  <p id="error-msg"></p>
-  <p class="error-hint">Serve this page from the <code>docs/</code> root so that
-     <code>weights/index.json</code> and <code>weights/word_&lt;TEXT&gt;.json</code> resolve.</p>
+<div id="controls">
+  <button id="play" class="primary">Play</button>
+  <button id="reset">Reset</button>
+  <button id="damage">Damage</button>
+
+  <label class="speed">
+    <span>speed</span>
+    <input id="speed" type="range" min="0" max="100" value="28">
+    <span id="speed-label" class="mono"></span>
+  </label>
+
+  <span id="status" class="mono">loading…</span>
 </div>
 
-<!-- Chrome: everything below auto-hides after ~3s of stillness -->
-<div id="chrome">
-
-  <div id="status" aria-live="off">
-    <span id="st-model">loading…</span>
-    <span class="sep">·</span>
-    <span id="st-step">step 0 / 120</span>
-    <span class="sep">·</span>
-    <span id="st-pct">0%</span>
-    <span class="sep">·</span>
-    <span id="st-engine" title="Compute backend">—</span>
-  </div>
-
-  <div id="help" role="dialog" aria-label="Keyboard shortcuts">
-    <div class="help-head">
-      <strong>Presenter keys</strong>
-      <button id="help-close" type="button" aria-label="Dismiss help">×</button>
-    </div>
-    <dl>
-      <dt>Space</dt><dd>play / pause</dd>
-      <dt>R</dt><dd>reset to seeds</dd>
-      <dt>← / →</dt><dd>step back / forward</dd>
-      <dt>D</dt><dd>damage a random spot</dd>
-      <dt>F</dt><dd>fullscreen</dd>
-      <dt>H</dt><dd>toggle this help</dd>
-      <dt>T</dt><dd>light / dark</dd>
-      <dt>click / drag</dt><dd>damage the canvas</dd>
-    </dl>
-    <p class="help-note">Controls fade after 3&nbsp;s of stillness. Move the mouse to bring them back.</p>
-  </div>
-
-  <div id="bar">
-    <div id="timeline" role="slider" aria-label="Growth timeline"
-         aria-valuemin="0" aria-valuemax="120" aria-valuenow="0" tabindex="0">
-      <div id="tl-fill"></div>
-      <div id="tl-knob"></div>
-    </div>
-
-    <div id="controls">
-      <button id="btn-play" type="button" class="primary">▶ Play</button>
-      <button id="btn-reset" type="button">Reset</button>
-      <button id="btn-back" type="button" title="Step back (←)">◀︎</button>
-      <button id="btn-fwd" type="button" title="Step forward (→)">▶︎</button>
-      <button id="btn-damage" type="button" title="Damage a random spot (D)">Damage</button>
-
-      <span class="spacer"></span>
-
-      <label class="field">
-        <span>Mode</span>
-        <select id="mode">
-          <option value="duration" selected>Duration</option>
-          <option value="free">Free run</option>
-        </select>
-      </label>
-
-      <label class="field" id="field-duration">
-        <span>Grow over</span>
-        <select id="duration">
-          <option value="1">1 min</option>
-          <option value="2">2 min</option>
-          <option value="5">5 min</option>
-          <option value="10">10 min</option>
-          <option value="20" selected>20 min</option>
-          <option value="30">30 min</option>
-          <option value="45">45 min</option>
-          <option value="60">60 min</option>
-        </select>
-      </label>
-
-      <label class="field" id="field-speed" hidden>
-        <span>Speed</span>
-        <input id="speed" type="range" min="1" max="30" step="1" value="10">
-        <output id="speed-label">10/s</output>
-      </label>
-
-      <span class="spacer"></span>
-
-      <button id="btn-theme" type="button" title="Light / dark (T)">Light</button>
-      <button id="btn-full" type="button" title="Fullscreen (F)">⛶ Full</button>
-      <button id="btn-help" type="button" title="Help (H)">?</button>
-    </div>
-  </div>
-</div>
+<p id="hint">
+  <b>Click or drag on the letters</b> to wound them &mdash; they grow back.
+  <span class="keys">space play/pause &middot; R reset &middot; D damage &middot; F fullscreen</span>
+</p>
 
 <script type="module" src="lecture.js"></script>
 </body>
