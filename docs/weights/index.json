@@ -1,1 +1,1 @@
-{"chars": ["G", "R", "?"], "words": ["COMP6441", "COMP", "9_line", "9_line_noise", "method1", "method2", "method4", "method5", "evaporate", "evaporate_noise", "hidden"]}
+{"chars": ["G", "R", "?"], "words": ["COMP6441", "COMP", "9_line", "9_line_noise", "method1", "method2", "method4", "method5", "evaporate", "evaporate_noise", "hidden", "method1_noise", "method2_noise", "method4_noise", "method5_noise", "cloud", "diffusion", "dynamic_n1", "dynamic_n100", "dynamic_n500", "adaptive_cloud", "dyn_clear_n1", "dyn_clear_n100", "dyn_clear_n500", "linear_cloud"]}
