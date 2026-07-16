@@ -8,7 +8,8 @@ methods = ['snaps_web_method1', 'snaps_web_method1_noise',
            'snaps_web_method5', 'snaps_web_method5_noise',
            'snaps_9_line',      'snaps_9_line_noise',
            'snaps_cloud',       'snaps_web_evaporate',
-           'snaps_web_hidden']
+           'snaps_web_hidden',  'snaps_web_evaporate_noise',
+           'snaps_web_hidden_noise']
 
 while True:
     status = {}
