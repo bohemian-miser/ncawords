@@ -272,18 +272,8 @@
     }
 
     function fetchNotes(dir) {
-        fetch('http://localhost:8002/api/notes').then(r=>r.json()).then(data => {
-            const list = document.getElementById('notes-list');
-            list.innerHTML = '';
-            if(data[dir]) {
-                data[dir].forEach(n => {
-                    let d = new Date(n.timestamp * 1000).toLocaleString();
-                    list.innerHTML += `<li style="margin-bottom:5px;"><b>${d}</b>: ${n.note}</li>`;
-                });
-            } else {
-                list.innerHTML = '<li><i>No notes yet.</i></li>';
-            }
-        }).catch(err => console.error(err));
+        const list = document.getElementById('notes-list');
+        list.innerHTML = '<li><i>Notes disabled in static preview mode.</i></li>';
     }
 
     function submitNote(event) {
@@ -309,10 +299,8 @@
     }
 
     function postNote(noteContent, callback) {
-        fetch('http://localhost:8002/api/notes', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({dir: activeModalDir, note: noteContent})
-        }).then(r=>r.json()).then(data => callback());
+        alert("Saving notes is disabled in static preview mode.");
+        callback();
     }
 
     function closeModal() {
