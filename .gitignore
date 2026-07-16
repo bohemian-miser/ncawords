@@ -3,3 +3,5 @@ __pycache__/
 logs/
 snaps/
 *.pyc
+snaps_*/
+*.pth

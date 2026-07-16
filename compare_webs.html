@@ -220,7 +220,10 @@
                     } else {
                         ct.lastStatusText = `Latest: Step ${currentHighest} / 16000`;
                         let stepStr = String(currentHighest).padStart(5, '0');
-                        if(ct.imgObj) ct.imgObj.src = `${ct.dir}COMP_${stepStr}.png?t=` + Date.now();
+                        if(ct.imgObj) {
+                            ct.imgObj.onerror = function() { this.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='; };
+                            ct.imgObj.src = `${ct.dir}COMP_${stepStr}.png?t=` + Date.now();
+                        }
                         if(ct.tgtObj) ct.tgtObj.src = `${ct.dir}TARGET_${stepStr}.png?t=` + Date.now();
                     }
                 }
@@ -344,12 +347,11 @@
             
             for (let s = start; s <= maxStep; s += 100) {
                 let stepStr = String(s).padStart(5, '0');
-                let compImgHtml = activeModalDir === 'snaps_proposed_targets/' ? 
-                                  '' : `<img src="${activeModalDir}COMP_${stepStr}.png" alt="Step ${s}">`;
+                let compImgHtml = `<img src="${activeModalDir}COMP_${stepStr}.png" onerror="this.style.display='none'" alt="Step ${s}">`;
                 
                 gallery.innerHTML += `
                     <div class="gallery-item">
-                        <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='${activeModalDir}target.png'" alt="Target Step ${s}">
+                        <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='${activeModalDir}target.png'; this.onerror=null;" alt="Target Step ${s}">
                         ${compImgHtml}
                         <span>Step ${s}</span>
                     </div>
