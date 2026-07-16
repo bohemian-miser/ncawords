@@ -52,6 +52,8 @@
             <option value="snaps_web_method5_noise">Method 5 (Noise)</option>
             <option value="snaps_9_line">9-Line Matrix (Seed)</option>
             <option value="snaps_9_line_noise">9-Line Matrix (Noise)</option>
+            <option value="snaps_web_evaporate">Evaporating Scaffold</option>
+            <option value="snaps_web_hidden">Hidden Channel Scaffold</option>
         </select>
         <button onclick="loadInteractiveModel()" style="padding:6px 15px; margin-left:10px; background:#4db8ff; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Load Weights</button>
         <button onclick="resetInteractive()" style="padding:6px 15px; margin-left:10px; background:#ff5555; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Reset Grid</button>
@@ -100,7 +102,9 @@
         { id: 'm5', title: 'Method 5: Gravity', dir: 'snaps_web_method5/' },
         { id: 'm5n', title: 'Method 5: Gravity (Noise)', dir: 'snaps_web_method5_noise/' },
         { id: 'm9', title: '9-Line Matrix', dir: 'snaps_9_line/' },
-        { id: 'm9n', title: '9-Line Matrix (Noise)', dir: 'snaps_9_line_noise/' }
+        { id: 'm9n', title: '9-Line Matrix (Noise)', dir: 'snaps_9_line_noise/' },
+        { id: 'evap', title: 'Evaporating Scaffold', dir: 'snaps_web_evaporate/' },
+        { id: 'hid', title: 'Hidden Channel Scaffold', dir: 'snaps_web_hidden/' }
     ];
 
     const container = document.getElementById('cards-container');
