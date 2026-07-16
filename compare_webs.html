@@ -260,8 +260,10 @@
     const apiBase = "http://localhost:8002/api";
     const canvas = document.getElementById("nca-canvas");
     const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
     let interactiveLoop = null;
     let isDamaging = false;
+    let lastDamageTime = 0;
     let fallbackImg = new Image();
     fallbackImg.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
 
@@ -314,6 +316,10 @@
     }
 
     function sendDamage(e) {
+        const now = Date.now();
+        if (now - lastDamageTime < 50) return; // Throttle requests
+        lastDamageTime = now;
+        
         const rect = canvas.getBoundingClientRect();
         const normX = (e.clientX - rect.left) / rect.width;
         const normY = (e.clientY - rect.top) / rect.height;
