@@ -184,13 +184,34 @@
     function initializeDropdown() {
         const selectBox = document.getElementById("interactive-model-select");
         selectBox.innerHTML = '';
-        methods.forEach(m => {
-            if (m.id === 'diffusion') return;
-            let opt = document.createElement('option');
-            opt.value = m.dir.replace('/', '');
-            opt.innerText = m.title;
-            selectBox.appendChild(opt);
-        });
+        
+        fetch('docs/weights/index.json?t=' + Date.now())
+            .then(r => r.json())
+            .then(idx => {
+                methods.forEach(m => {
+                    if (m.id === 'diffusion') return;
+                    
+                    let dirName = m.dir.replace('/', '');
+                    let lookupName = dirName.replace('snaps_web_', '').replace('snaps_', '');
+                    
+                    if (idx.words.includes(lookupName) || m.id === 'guided' || m.id === 'cloud') {
+                        let opt = document.createElement('option');
+                        opt.value = dirName;
+                        opt.innerText = m.title;
+                        selectBox.appendChild(opt);
+                    }
+                });
+            })
+            .catch(err => {
+                // Fallback to all if index fails
+                methods.forEach(m => {
+                    if (m.id === 'diffusion') return;
+                    let opt = document.createElement('option');
+                    opt.value = m.dir.replace('/', '');
+                    opt.innerText = m.title;
+                    selectBox.appendChild(opt);
+                });
+            });
     }
     
     function prevInteractiveModel() {
