@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NCA Topology Comparison Dashboard</title>
+<style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a1a; color: #f0f0f0; margin: 0; padding: 20px; }
+    h1 { text-align: center; margin-bottom: 30px; letter-spacing: 2px; }
+    #cards-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+    
+    .card { background: #2a2a2a; border-radius: 8px; padding: 20px; text-align: center; width: 400px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 2px solid #444; transition: transform 0.2s; cursor: pointer; }
+    .card:hover { transform: scale(1.02); border-color: #666; }
+    .card h3 { margin-top: 0; font-size: 1.1em; color: #4db8ff; height: 30px; }
+    .status { font-size: 0.9em; color: #888; margin-top: 15px; }
+
+    .side-by-side { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+    .side-by-side > div { width: 48%; }
+    .sub-desc { font-size: 0.8em; color: #aaa; margin-bottom: 5px; }
+    .img-container { width: 100%; height: 180px; display: flex; justify-content: center; align-items: center; background: #111; border-radius: 4px; overflow: hidden; }
+    .img-container img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+
+    /* Modal for history gallery */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; overflow-y: auto; }
+    .modal-content { display: flex; flex-direction: column; align-items: center; padding: 40px; position: relative; }
+    .modal-close { position: fixed; top: 20px; right: 40px; color: white; font-size: 40px; cursor: pointer; z-index: 1100; font-weight: bold; }
+    .modal-close:hover { color: #ff5555; }
+    .modal-gallery { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; max-width: 1200px; }
+    .gallery-item { background: #222; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #444; }
+    .gallery-item img { width: 150px; height: 150px; object-fit: contain; image-rendering: pixelated; display: block; margin-bottom: 8px; background: #000; }
+    .gallery-item span { font-size: 0.85em; color: #ccc; }
+</style>
+</head>
+<body>
+
+<h1>NCA Generation Progress Dashboard (Live)</h1>
+
+<!-- Interactive Widget -->
+<div id="interactive-widget" style="background:#2a2a2a; border-radius:8px; padding:20px; text-align:center; box-shadow:0 4px 6px rgba(0,0,0,0.3); border:2px solid #4db8ff; margin: 0 auto 30px auto; max-width: 600px;">
+    <h2 style="margin-top:0; color:#4db8ff;">Interactive Playground</h2>
+    <p style="font-size: 0.9em; color:#aaa;">Requires <code>python interactive_server.py</code> running on port 8002</p>
+    
+    <div style="margin-bottom:15px;">
+        <select id="interactive-model-select" style="padding:5px; background:#111; color:#fff; border:1px solid #444; border-radius:4px;">
+            <option value="snaps_cloud">Cloud Condensation</option>
+            <option value="snaps_web_method1">Method 1 (Seed)</option>
+            <option value="snaps_web_method1_noise">Method 1 (Noise)</option>
+            <option value="snaps_web_method2">Method 2 (Seed)</option>
+            <option value="snaps_web_method2_noise">Method 2 (Noise)</option>
+            <option value="snaps_web_method4">Method 4 (Seed)</option>
+            <option value="snaps_web_method4_noise">Method 4 (Noise)</option>
+            <option value="snaps_web_method5">Method 5 (Seed)</option>
+            <option value="snaps_web_method5_noise">Method 5 (Noise)</option>
+            <option value="snaps_9_line">9-Line Matrix (Seed)</option>
+            <option value="snaps_9_line_noise">9-Line Matrix (Noise)</option>
+        </select>
+        <button onclick="loadInteractiveModel()" style="padding:6px 15px; margin-left:10px; background:#4db8ff; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Load Weights</button>
+        <button onclick="resetInteractive()" style="padding:6px 15px; margin-left:10px; background:#ff5555; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Reset Grid</button>
+    </div>
+    
+    <div style="display:flex; align-items:center; justify-content:center; gap:15px; margin-bottom:15px;">
+        <label>Animation Speed (Steps/tick):</label>
+        <input type="range" id="speed-slider" min="1" max="25" value="1" style="width:150px;">
+        <span id="speed-val">1</span>
+    </div>
+    
+    <div style="display:inline-block; position:relative; background:#000; border: 2px solid #444; border-radius:4px;">
+        <!-- Canvas for interaction tracking -->
+        <canvas id="nca-canvas" width="600" height="200" onmousedown="startDamage(event)" onmousemove="doDamage(event)" onmouseup="stopDamage(event)" onmouseleave="stopDamage(event)" style="cursor:crosshair;"></canvas>
+    </div>
+</div>
+
+<div id="cards-container"></div>
+
+<!-- Modal -->
+<div id="modal" class="modal-overlay" onclick="handleOverlayClick(event)">
+   <div class="modal-content" onclick="handleContentClick(event)">
+       <span class="modal-close" onclick="closeModal()">&times;</span>
+       <h2 id="modal-title">Method</h2>
+       <div id="modal-notes" style="width: 80%; background:#111; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+           <h3 style="margin-top:0; color:#4db8ff;">Notes & Observations</h3>
+           <ul id="notes-list" style="color: #ccc; font-size: 0.95em; text-align:left; max-height:150px; overflow-y:auto; padding-left:20px;"></ul>
+           <div style="display:flex; gap:10px; margin-top: 10px;">
+               <input type="text" id="note-input" placeholder="Add a note (e.g. Needs more loss thresholding)..." style="flex:1; padding:8px; background:#222; color:#fff; border:1px solid #555; border-radius:4px;" onclick="event.stopPropagation()">
+               <button onclick="submitNote(event)" style="padding:8px 15px; background:#4db8ff; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Post Note</button>
+           </div>
+       </div>
+       <div class="modal-gallery" id="modal-gallery"></div>
+   </div>
+</div>
+
+<script>
+    const methods = [
+        { id: 'cloud', title: 'Top 6: Cloud Condensation', dir: 'snaps_cloud/' },
+        { id: 'm1', title: 'Method 1: 3-Line BB', dir: 'snaps_web_method1/' },
+        { id: 'm1n', title: 'Method 1: 3-Line BB (Noise)', dir: 'snaps_web_method1_noise/' },
+        { id: 'm2', title: 'Method 2: Organic', dir: 'snaps_web_method2/' },
+        { id: 'm2n', title: 'Method 2: Organic (Noise)', dir: 'snaps_web_method2_noise/' },
+        { id: 'm4', title: 'Method 4: Proximity', dir: 'snaps_web_method4/' },
+        { id: 'm4n', title: 'Method 4: Proximity (Noise)', dir: 'snaps_web_method4_noise/' },
+        { id: 'm5', title: 'Method 5: Gravity', dir: 'snaps_web_method5/' },
+        { id: 'm5n', title: 'Method 5: Gravity (Noise)', dir: 'snaps_web_method5_noise/' },
+        { id: 'm9', title: '9-Line Matrix', dir: 'snaps_9_line/' },
+        { id: 'm9n', title: '9-Line Matrix (Noise)', dir: 'snaps_9_line_noise/' }
+    ];
+
+    const container = document.getElementById('cards-container');
+    
+    // Build cards
+    methods.forEach(m => {
+        container.innerHTML += `
+            <div class="card" onclick="openModal('${m.title}', '${m.dir}')">
+                <h3>${m.title}</h3>
+                <div class="side-by-side">
+                    <div>
+                        <div class="sub-desc">Live Target</div>
+                        <div class="img-container"><img id="live_tgt_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onerror="this.src='snaps_9_line/target.png'"></div>
+                    </div>
+                    <div>
+                        <div class="sub-desc">Latest Checkpoint</div>
+                        <div class="img-container"><img id="live_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></div>
+                    </div>
+                </div>
+                <div class="status" id="live_status_${m.id}">Loading Server State...</div>
+            </div>
+        `;
+    });
+    
+    let serverState = {};
+    let activeModalDir = null;
+    let activeModalMaxStepRendered = -100;
+    
+    function fetchStatus() {
+        fetch('status.json?t=' + Date.now())
+            .then(res => res.json())
+            .then(data => {
+                serverState = data;
+                updateOverviewUI();
+                updateActiveModalUI();
+            })
+            .catch(err => {
+                console.error("status.json fetch failed", err);
+            });
+    }
+    
+    setInterval(fetchStatus, 1500);
+    fetchStatus();
+
+    const cardTrackers = methods.map(m => ({
+        dir: m.dir, 
+        imgObj: document.getElementById(`live_${m.id}`), 
+        tgtObj: document.getElementById(`live_tgt_${m.id}`), 
+        statusObj: document.getElementById(`live_status_${m.id}`), 
+        lastKnownStep: -100 
+    }));
+    
+    function updateOverviewUI() {
+        cardTrackers.forEach(ct => {
+            const currentHighest = serverState[ct.dir];
+            if (currentHighest !== undefined && currentHighest > ct.lastKnownStep) {
+                ct.lastKnownStep = currentHighest;
+                if (currentHighest === -1) {
+                    ct.statusObj.innerText = "No runs logged yet (Waiting on step 0)";
+                } else {
+                    ct.statusObj.innerText = `Latest: Step ${currentHighest} / 8000`;
+                    let stepStr = String(currentHighest).padStart(5, '0');
+                    ct.imgObj.src = `${ct.dir}COMP_${stepStr}.png?t=` + Date.now();
+                    ct.tgtObj.src = `${ct.dir}TARGET_${stepStr}.png?t=` + Date.now();
+                }
+            }
+        });
+    }
+
+    function openModal(title, dir) {
+        document.getElementById('modal-title').innerText = title;
+        const gallery = document.getElementById('modal-gallery');
+        gallery.innerHTML = '';
+        activeModalDir = dir;
+        activeModalMaxStepRendered = -100;
+        document.getElementById('modal').style.display = 'block';
+        updateActiveModalUI();
+        fetchNotes(dir);
+    }
+
+    function fetchNotes(dir) {
+        fetch('http://localhost:8002/api/notes').then(r=>r.json()).then(data => {
+            const list = document.getElementById('notes-list');
+            list.innerHTML = '';
+            if(data[dir]) {
+                data[dir].forEach(n => {
+                    let d = new Date(n.timestamp * 1000).toLocaleString();
+                    list.innerHTML += `<li style="margin-bottom:5px;"><b>${d}</b>: ${n.note}</li>`;
+                });
+            } else {
+                list.innerHTML = '<li><i>No notes yet.</i></li>';
+            }
+        }).catch(err => console.error(err));
+    }
+
+    function submitNote(event) {
+        event.stopPropagation();
+        const input = document.getElementById('note-input');
+        const note = input.value.trim();
+        if(!note || !activeModalDir) return;
+        
+        fetch('http://localhost:8002/api/notes', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({dir: activeModalDir, note: note})
+        }).then(r=>r.json()).then(data => {
+            input.value = '';
+            fetchNotes(activeModalDir);
+        });
+    }
+
+    function closeModal() {
+        document.getElementById('modal').style.display = 'none';
+        activeModalDir = null;
+    }
+    
+    // Allow clicking the overlay background to close the modal
+    function handleOverlayClick(event) {
+        closeModal();
+    }
+    
+    // Prevent clicks inside the modal content from bubbling up and closing it
+    function handleContentClick(event) {
+        event.stopPropagation();
+    }
+
+    function updateActiveModalUI() {
+        if (!activeModalDir) return;
+        const maxStep = serverState[activeModalDir];
+        if (maxStep !== undefined && maxStep > activeModalMaxStepRendered) {
+            const gallery = document.getElementById('modal-gallery');
+            let start = Math.max(0, activeModalMaxStepRendered + 100);
+            if (activeModalMaxStepRendered === -100) start = 0;
+            
+            for (let s = start; s <= maxStep; s += 100) {
+                let stepStr = String(s).padStart(5, '0');
+                gallery.innerHTML += `
+                    <div class="gallery-item">
+                        <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='snaps_9_line/target.png'" alt="Target Step ${s}">
+                        <img src="${activeModalDir}COMP_${stepStr}.png" alt="Step ${s}">
+                        <span>Step ${s}</span>
+                    </div>
+                `;
+            }
+            activeModalMaxStepRendered = maxStep;
+        }
+    }
+
+    // INTERACTIVE WIDGET LOGIC
+    const apiBase = "http://localhost:8002/api";
+    const canvas = document.getElementById("nca-canvas");
+    const ctx = canvas.getContext("2d");
+    let interactiveLoop = null;
+    let isDamaging = false;
+    let fallbackImg = new Image();
+    fallbackImg.src = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+
+    document.getElementById("speed-slider").oninput = function() {
+        document.getElementById("speed-val").innerText = this.value;
+    };
+
+    function loadInteractiveModel() {
+        if(interactiveLoop) clearTimeout(interactiveLoop);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#888";
+        ctx.fillText("Loading...", canvas.width/2 - 20, canvas.height/2);
+        
+        const dir = document.getElementById("interactive-model-select").value;
+        fetch(`${apiBase}/load`, {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({dir: dir})
+        }).then(r => r.json()).then(data => {
+            if (data.error) alert(data.error);
+            else runInteractiveLoop();
+        }).catch(e => {
+            alert("Ensure interactive_server.py is running on port 8002! Error: " + e);
+        });
+    }
+
+    function resetInteractive() {
+        const dir = document.getElementById("interactive-model-select").value;
+        fetch(`${apiBase}/reset`, {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({dir: dir})
+        });
+    }
+
+    function runInteractiveLoop() {
+        const steps = parseInt(document.getElementById("speed-slider").value);
+        fetch(`${apiBase}/step`, {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({steps: steps})
+        }).then(r => r.json()).then(data => {
+            if (data.image) {
+                let img = new Image();
+                img.onload = () => { ctx.drawImage(img, 0, 0, canvas.width, canvas.height); };
+                img.src = data.image;
+            }
+            interactiveLoop = setTimeout(runInteractiveLoop, 30);
+        }).catch(e => {
+            console.log("Interact loop error", e);
+            interactiveLoop = setTimeout(runInteractiveLoop, 1000);
+        });
+    }
+
+    function sendDamage(e) {
+        const rect = canvas.getBoundingClientRect();
+        const normX = (e.clientX - rect.left) / rect.width;
+        const normY = (e.clientY - rect.top) / rect.height;
+        fetch(`${apiBase}/damage`, {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({x: normX, y: normY, r: 0.05})
+        });
+        
+        // Draw immediate feedback ring
+        ctx.beginPath();
+        ctx.arc(e.clientX - rect.left, e.clientY - rect.top, 15, 0, 2*Math.PI);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'red';
+        ctx.stroke();
+    }
+    
+    function startDamage(e) { isDamaging = true; sendDamage(e); }
+    function stopDamage(e) { isDamaging = false; }
+    function doDamage(e) { if(isDamaging) sendDamage(e); }
+
+</script>
+
+</body>
+</html>
