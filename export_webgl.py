@@ -28,7 +28,7 @@ def export_all():
         name = model_dir.replace('snaps_web_', '').replace('snaps_', '').replace('/', '')
         
         # Infer properties
-        if "method1" in model_dir or "method4" in model_dir or "method5" in model_dir or m["id"] == "cloud" or m["id"] == "guided_run":
+        if "method1" in model_dir or "method4" in model_dir or "method5" in model_dir or m["id"] == "cloud" or m["id"] == "guided":
             c_n, h_n = 32, 128
         else:
             c_n, h_n = 16, 80
