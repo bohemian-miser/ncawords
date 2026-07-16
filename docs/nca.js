@@ -130,9 +130,14 @@ export class CPUCA {
 
   clear() { this._buf.fill(0); }
 
-  reset() {
+  reset(noise = false) {
     this.clear();
-    if (this._seeds && this._seeds.length) {
+    
+    if (noise) {
+        for (let i = 0; i < this._buf.length; i++) {
+            this._buf[i] = Math.random();
+        }
+    } else if (this._seeds && this._seeds.length) {
       for (const s of this._seeds) this._placeSeed(s.x, s.y, s.code);
     } else {
       this.seed(this._W >> 1, this._H >> 1);
@@ -577,9 +582,19 @@ export class GLCA {
     this._frame = 0;
   }
 
-  reset() {
+  reset(noise = false) {
     this.clear();
-    if (this._seeds && this._seeds.length) {
+    if (noise) {
+        const gl = this.gl;
+        const total = this._W * this._H * 4;
+        
+        for (let t = 0; t < this._T; t++) {
+            const noiseData = new Float32Array(total);
+            for(let i=0; i<total; i++) noiseData[i] = Math.random();
+            gl.bindTexture(gl.TEXTURE_2D, this._sets[this._cur].texs[t]);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this._W, this._H, gl.RGBA, gl.FLOAT, noiseData);
+        }
+    } else if (this._seeds && this._seeds.length) {
       for (const s of this._seeds) this._placeSeed(s.x, s.y, s.code);
     } else {
       this.seed(this._W >> 1, this._H >> 1);

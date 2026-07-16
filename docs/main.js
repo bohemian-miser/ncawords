@@ -142,7 +142,8 @@ function initUnitCA(unit, weights) {
   unit.imgData = unit.ctx.createImageData(unit.w, unit.h);
   unit.steps = 0;
   unit.ready = true;
-  ca.reset();
+  unit.isNoise = (weights.text && weights.text.endsWith('_noise'));
+  ca.reset(unit.isNoise);
   draw(unit);
 }
 
@@ -283,7 +284,7 @@ function attachPointerHandlers(unit) {
 
   unit.canvas.addEventListener('dblclick', () => {
     if (!unit.ready) return;
-    unit.ca.reset();
+    unit.ca.reset(unit.isNoise);
     unit.steps = 0;
     if (!running()) { draw(unit); updateStatus(); }
   });
@@ -364,7 +365,7 @@ els.step.addEventListener('click', () => {
 
 els.reset.addEventListener('click', () => {
   for (const unit of allUnits()) {
-    unit.ca.reset();
+    unit.ca.reset(unit.isNoise);
     unit.steps = 0;
     draw(unit);
   }

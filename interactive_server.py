@@ -105,8 +105,7 @@ def step():
     img_rgb = (1.0 - a + img_tensor * a).clip(0, 1)
 
     im = Image.fromarray((img_rgb * 255).astype(np.uint8))
-    # Scale up for easy viewing
-    im = im.resize((im.width * 8, im.height * 8), resample=Image.NEAREST)
+    # Let the client-side canvas stretch the image instead of bloating server serialization
     
     buffered = io.BytesIO()
     im.save(buffered, format="PNG")
@@ -174,5 +173,11 @@ def static_files(path):
     return send_from_directory(".", path)
 
 if __name__ == "__main__":
-    print("Starting Interactive NCA Server on http://localhost:8002/")
+    from nca.manager import update_methods
+    try:
+        update_methods("methods.json")
+    except Exception as e:
+        print(f"Warning: Failed to update methods.json: {e}")
+        
+    print(f"Starting Interactive NCA Server on http://localhost:8002/ (Device: {device})")
     app.run(host="0.0.0.0", port=8002, threaded=True)

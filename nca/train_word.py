@@ -29,13 +29,16 @@ PITCH = 24          # px per character slot
 MARGIN = 12         # left/right margin
 GRID_H = 32
 CODE_CH0 = 4        # first code channel
-CODE_BITS = 5
+CODE_BITS = 6
 
 
 def letter_code(ch):
-    """5-bit binary code for A..Z, as floats 0/1."""
-    i = ord(ch.upper()) - ord("A")
-    assert 0 <= i < 26, f"only A-Z supported, got {ch!r}"
+    """6-bit binary code for A-Z and 0-9."""
+    if ch.isdigit():
+        i = 26 + int(ch)
+    else:
+        i = ord(ch.upper()) - ord("A")
+    assert 0 <= i < 36, f"only A-Z and 0-9 supported, got {ch!r}"
     return [(i >> b) & 1 for b in range(CODE_BITS)]
 
 
