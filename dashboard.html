@@ -23,6 +23,7 @@
         <button onclick="loadInteractiveModel()" style="padding:6px 15px; margin-left:10px; background:#4db8ff; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Load Weights</button>
         <button onclick="resetInteractive()" style="padding:6px 15px; margin-left:10px; background:#ff5555; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Reset Grid</button>
         <button onclick="noiseInteractive()" style="padding:6px 15px; margin-left:10px; background:#ffaa00; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" title="Fill the grid with random noise (natural habitat for the denoising models)">Fill Noise</button>
+        <button id="pause-btn" onclick="togglePause()" style="padding:6px 15px; margin-left:10px; background:#66dd66; color:#000; border:none; border-radius:4px; font-weight:bold; cursor:pointer;" title="Freeze/resume the CA so you can inspect a state">⏸ Pause</button>
     </div>
     
     <div style="display:flex; align-items:center; justify-content:center; gap:15px; margin-bottom:15px;">

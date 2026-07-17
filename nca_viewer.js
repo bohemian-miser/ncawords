@@ -126,8 +126,17 @@ window.noiseInteractive = function() {
     window.interactiveLoop = setTimeout(window.runInteractiveLoop, 1000);
 };
 
+window.paused = false;
+window.togglePause = function() {
+    window.paused = !window.paused;
+    const btn = document.getElementById('pause-btn');
+    if (btn) btn.innerText = window.paused ? '▶ Play' : '⏸ Pause';
+    if (!window.paused) window.runInteractiveLoop();
+    else if (window.interactiveLoop) clearTimeout(window.interactiveLoop);
+};
+
 window.runInteractiveLoop = function() {
-    if(!unit || !unit.ca) return;
+    if(!unit || !unit.ca || window.paused) return;
     const steps = parseInt(document.getElementById("speed-slider").value);
     for(let i=0; i<steps; i++) unit.ca.step();
     drawCA();
