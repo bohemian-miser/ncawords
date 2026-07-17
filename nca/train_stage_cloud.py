@@ -199,8 +199,12 @@ def train(text, steps=16000, glyph=12, channel_n=16, hidden_n=80,
                 except Exception as e:
                     print(f"Failed to snap: {e}")
                     
-                import subprocess
-                subprocess.Popen(["venv/bin/python", "update_dashboard.py"])
+                if os.path.exists("update_dashboard.py"):
+                    try:
+                        import subprocess
+                        subprocess.Popen([sys.executable, "update_dashboard.py"])
+                    except Exception:
+                        pass
                 
             print(f"[stage_cloud] step {step} loss_rgba {loss_rgba.item():.5f} loss_stage {loss_stage.item():.5f} X:{x_idx:.2f}->Y:{y_idx:.2f} (idx:{curr_idx}/{len(curriculum)}) {(time.time() - t0):.1f}s", flush=True)
 

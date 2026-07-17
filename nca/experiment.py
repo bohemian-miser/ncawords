@@ -1,8 +1,9 @@
 import os
 import json
 from pathlib import Path
+import abc
 
-class Experiment:
+class Experiment(abc.ABC):
     """
     Base class for all NCA training curriculum modules.
     Subclasses must define title, description, and target generation logic.

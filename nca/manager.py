@@ -1,6 +1,7 @@
 import sys
 import json
 from pathlib import Path
+import inspect
 
 # Add project root to sys.path to allow nca imports
 root_dir = Path(__file__).resolve().parent.parent
@@ -36,15 +37,6 @@ def update_methods(output_file="methods.json"):
     based on all properly imported Experiment subclasses.
     """
     
-    # base subclasses
-    # Check if LegacyExperiment subclasses need to be expanded individually
-    if 'LegacyExperiment' in [subclass.__name__ for subclass in Experiment.__subclasses__()]:
-        # Filter out LegacyExperiment itself from methods it hasn't properly implemented get_metadata vs direct use?
-        # Actually, LegacyExperiment.__subclasses__() will contain m1, m1n...
-        # Wait, Experiment.__subclasses__() might only contain LegacyExperiment, GuidedExperiment, etc.
-        # We need to deeply fetch all subclasses.
-        pass
-        
     def get_all_subclasses(cls):
         all_subclasses = []
         for subclass in cls.__subclasses__():
@@ -56,12 +48,12 @@ def update_methods(output_file="methods.json"):
     
     methods = []
     for cls in all_experiments:
-        if cls.__name__ == 'LegacyExperiment':
+        if inspect.isabstract(cls) or cls.__name__ in ('LegacyExperiment', 'DynamicOrganicExperiment'):
             continue
         try:
             methods.append(cls().get_metadata())
-        except Exception:
-            pass # skip classes that can't be instantiated easily, like abstract ones if they exist
+        except TypeError:
+            pass # skip classes that can't be instantiated without arguments
             
     # Generate the 12 parameterized versions of Dynamic Organic
     try:

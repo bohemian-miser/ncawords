@@ -58,7 +58,7 @@ def save_word_png(model, text, channel_n, step, snap_dir, x_idx, y_idx, device, 
 
 def train(text, steps=16000, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=1024, lr=2e-3, damage_n=1, ca_min=64, ca_max=96,
-          log_every=100, out=None, snap_dir="snaps_adaptive_cloud"):
+          log_every=100, out=None, snap_dir="snaps_cloud_stepped"):
     torch.manual_seed(sum(map(ord, text)) + 99)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}", flush=True)
@@ -155,21 +155,8 @@ def train(text, steps=16000, glyph=12, channel_n=16, hidden_n=80,
         sched.step()
         pool.commit(idx, x.cpu())
 
-        # Adaptive progression
-        recent_losses.append(loss.item())
-        if len(recent_losses) > 100:
-            recent_losses.pop(0)
-        
-        if len(recent_losses) == 100:
-            avg_loss = sum(recent_losses) / 100.0
-            if avg_loss < 0.035:
-                # Progress to next curriculum stage
-                curr_idx = min(curr_idx + 1, len(curriculum) - 1)
-                recent_losses.clear()
-            elif avg_loss > 0.06:
-                # Revert a bit if struggling hard
-                curr_idx = max(0, curr_idx - 1)
-                recent_losses.clear()
+        # Step-based progression
+        curr_idx = min(step // 100, len(curriculum) - 1)
 
         if step % log_every == 0 or step == steps - 1:
             if snap_dir:
@@ -211,7 +198,7 @@ def train(text, steps=16000, glyph=12, channel_n=16, hidden_n=80,
                     except Exception:
                         pass
                 
-            print(f"[adaptive_cloud] step {step} loss {loss.item():.5f} X:{x_idx:.2f}->Y:{y_idx:.2f} (idx:{curr_idx}/{len(curriculum)}) {(time.time() - t0):.1f}s", flush=True)
+            print(f"[cloud_stepped] step {step} loss {loss.item():.5f} X:{x_idx:.2f}->Y:{y_idx:.2f} (idx:{curr_idx}/{len(curriculum)}) {(time.time() - t0):.1f}s", flush=True)
 
     print(f"Final loss for {text}: {loss.item():.5f}")
     if out:
@@ -224,7 +211,19 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=16000)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--out", default=None)
-    p.add_argument("--snap-dir", default="snaps_adaptive_cloud")
+    p.add_argument("--snap-dir", default="snaps_cloud_stepped")
     a = p.parse_args()
     
     train(a.text, steps=a.steps, log_every=a.log_every, out=a.out, snap_dir=a.snap_dir)
+
+from nca.experiment import Experiment
+
+class AdaptiveCloudSteppedExperiment(Experiment):
+    ID = "cloud_stepped"
+    TITLE = "Adaptive Cloud (Stepped)"
+    DESCRIPTION = "Curriculum that steps down noise levels linearly every 100 steps, disregarding loss thresholds."
+    SEED_TYPE = "noise"
+
+    def train(self, steps=16000):
+        # reuse the module train function
+        train(text="COMP", steps=steps, out=str(self.output_dir / "latest.pth"), snap_dir=str(self.output_dir))

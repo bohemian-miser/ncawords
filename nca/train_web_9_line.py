@@ -217,6 +217,7 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
 
         if step % log_every == 0 or step == steps - 1:
             if snap_dir:
+                os.makedirs(snap_dir, exist_ok=True)
                 try:
                     
                     

@@ -22,10 +22,11 @@ def export_all():
             continue
             
         model_dir = m["dir"]
-        pth_val = f"{model_dir}latest.pth"
+        pth_val = Path(model_dir) / "latest.pth"
         
-        # Remove snaps_ and snaps_web_ to get base name
-        name = model_dir.replace('snaps_web_', '').replace('snaps_', '').replace('/', '')
+        # Remove snaps_ and snaps_web_ to get base name (as fallback for 'id')
+        fallback_name = model_dir.replace('snaps_web_', '').replace('snaps_', '').replace('/', '')
+        name = m.get("id", fallback_name)
         
         # Read directly from configuration instead of inferring from path
         c_n = m.get("c_n", 16)
@@ -35,14 +36,22 @@ def export_all():
             print(f"Skipping {name}: {pth_val} not found")
             continue
             
-        print(f"Loading {name} (c_n={c_n}, h_n={h_n})...")
         device = "cpu"
-        model = NCA(c_n, hidden_n=h_n).to(device)
         ckpt = torch.load(pth_val, map_location=device, weights_only=True)
-        if "model_state_dict" in ckpt:
-            model.load_state_dict(ckpt["model_state_dict"])
-        else:
-            model.load_state_dict(ckpt)
+        state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+
+        # Dynamically infer c_n and h_n from weight shapes if available
+        if "fc1.weight" in state_dict:
+            c_n = state_dict["fc1.weight"].shape[0]
+            h_n = state_dict["fc1.weight"].shape[1]
+
+        print(f"Loading {name} (c_n={c_n}, h_n={h_n})...")
+        model = NCA(c_n, hidden_n=h_n).to(device)
+        try:
+            model.load_state_dict(state_dict)
+        except Exception as e:
+            print(f"Error loading state_dict for {name}: {e}")
+            continue
         
         out_path = docs_weights / f"word_{name}.json"
         

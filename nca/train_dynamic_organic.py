@@ -247,6 +247,7 @@ class DynamicOrganicExperiment(Experiment):
                 recent_losses.clear()
 
             if step % self.log_every == 0 or step == total_steps - 1:
+                os.makedirs(self.output_dir, exist_ok=True)
                 try:
                     tgt_t = target_noisy if 'target_noisy' in locals() else target
                     a = tgt_t[0, 3:4].cpu()

@@ -209,11 +209,12 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
                 with open(Path(snap_dir) / "loss.txt", "w") as f:
                     f.write(str(loss.item()))
                 
-                import subprocess
-                try:
-                    subprocess.run(["python", "update_dashboard.py"])
-                except Exception as e:
-                    pass
+                if os.path.exists("update_dashboard.py"):
+                    try:
+                        import subprocess
+                        subprocess.Popen([sys.executable, "update_dashboard.py"])
+                    except Exception:
+                        pass
                 
                 torch.save(model.state_dict(), Path(snap_dir) / "latest.pth")
 
