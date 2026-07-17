@@ -129,9 +129,11 @@ def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
                     "args": job_args,
                 },
             }],
+            # No base_output_directory: it must live in the job's region and
+            # our regional bucket is us-central1-only — this constraint is
+            # what silently killed every cross-region submission. Scripts
+            # write via the region-agnostic /gcs FUSE mount instead.
             "scheduling": {"strategy": strategy},
-            "base_output_directory": {
-                "output_uri_prefix": f"{STAGING_BUCKET}/aiplatform-output/{job_name}"},
         },
     }
     job = client.create_custom_job(
