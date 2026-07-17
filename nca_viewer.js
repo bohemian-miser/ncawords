@@ -33,8 +33,9 @@ window.loadInteractiveModel = async function() {
     let fallbackJsonName = baseJson.replace('_noise', '') + '.json';
 
     try {
-        // Absolute URLs (cloud-run weights in the public bucket) load as-is.
-        let res = await fetch(dir.startsWith("http") ? dir : `docs/weights/${jsonName}`);
+        // Absolute URLs (cloud-run weights in the public bucket) load as-is;
+        // bust GCS's 1-hour object cache since training updates them live.
+        let res = await fetch(dir.startsWith("http") ? `${dir}?t=${Date.now()}` : `docs/weights/${jsonName}`);
 
         // If the specific _noise model wasn't exported, fallback to the base model weights
         if(!res.ok && isNoise) {

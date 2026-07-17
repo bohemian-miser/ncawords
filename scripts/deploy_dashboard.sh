@@ -3,7 +3,8 @@
 # rewriting paths that differ between repo-root serving and docs-root serving.
 set -e
 cd "$(dirname "$0")/.."
-cp dashboard.html docs/dashboard.html
+VERSION=$(git rev-parse --short HEAD 2>/dev/null || date +%s)
+sed "s|?v=dev|?v=$VERSION|g" dashboard.html > docs/dashboard.html
 cp dashboard.css docs/dashboard.css
 sed "s|docs/weights/|weights/|g" dashboard.js > docs/dashboard.js
 sed "s|'./docs/nca.js'|'./nca.js'|" nca_viewer.js > docs/nca_viewer.js
