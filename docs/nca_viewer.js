@@ -12,7 +12,9 @@ let unit = null; // Holds the instantiated CA
 
 // Event listener for the speed slider
 document.getElementById("speed-slider").oninput = function() {
-    document.getElementById("speed-val").innerText = this.value;
+    const v = parseFloat(this.value);
+    document.getElementById("speed-val").innerText =
+        v >= 1 ? String(Math.round(v)) : `1/${Math.round(1 / v)}`;
 };
 
 window.loadInteractiveModel = async function() {
@@ -135,11 +137,16 @@ window.togglePause = function() {
     else if (window.interactiveLoop) clearTimeout(window.interactiveLoop);
 };
 
+let stepAccum = 0;
 window.runInteractiveLoop = function() {
     if(!unit || !unit.ca || window.paused) return;
-    const steps = parseInt(document.getElementById("speed-slider").value);
+    // Fractional speeds (< 1 step/tick) accumulate across ticks — slow
+    // motion for watching fast dynamics like noise collapse.
+    stepAccum += parseFloat(document.getElementById("speed-slider").value);
+    const steps = Math.floor(stepAccum);
+    stepAccum -= steps;
     for(let i=0; i<steps; i++) unit.ca.step();
-    drawCA();
+    if (steps > 0) drawCA();
     window.interactiveLoop = setTimeout(window.runInteractiveLoop, 30);
 };
 
