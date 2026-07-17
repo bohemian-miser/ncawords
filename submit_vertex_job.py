@@ -97,35 +97,47 @@ def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
 
     print(f"Submitting module '{module_name}' to Vertex AI CustomJob ({job_name}, {location})...")
     print(f"  args: {job_args}")
-    job = aiplatform.CustomPythonPackageTrainingJob(
-        display_name=job_name,
-        python_package_gcs_uri=package_uri,
-        python_module_name=module_name,
-        container_uri=CONTAINER_URI,
-        project=PROJECT_ID,
-        location=location,
-        staging_bucket=STAGING_BUCKET,
-    )
 
-    strategy = aiplatform.compat.types.custom_job.Scheduling.Strategy.SPOT
-    if on_demand:
-        print("Submitting as ON-DEMAND job (instant, but full price).")
-        strategy = aiplatform.compat.types.custom_job.Scheduling.Strategy.STANDARD
-    else:
-        print("Submitting as SPOT job (queued & discounted).")
-
+    # Low-level JobServiceClient with a regional endpoint: synchronous
+    # creation that returns the job resource or raises. The high-level
+    # CustomPythonPackageTrainingJob submits on a background thread and
+    # silently dropped jobs whose region differed from the SDK's global
+    # config (10 of 12 cross-region submissions vanished).
+    from google.cloud import aiplatform_v1
     spec = MACHINES[machine]
-    job.run(
-        args=job_args,
-        machine_type=spec["machine_type"],
-        accelerator_type=spec["accelerator_type"],
-        accelerator_count=1,
-        scheduling_strategy=strategy,
-        sync=False,
-    )
+    strategy = (aiplatform_v1.types.Scheduling.Strategy.STANDARD if on_demand
+                else aiplatform_v1.types.Scheduling.Strategy.SPOT)
+    print(f"  {'ON-DEMAND' if on_demand else 'SPOT'} on {spec['accelerator_type']}")
 
-    print(f"\nQueued {job_name}.")
-    print(f"Monitor: https://console.cloud.google.com/vertex-ai/training/custom-jobs?project={PROJECT_ID}")
+    client = aiplatform_v1.JobServiceClient(
+        client_options={"api_endpoint": f"{location}-aiplatform.googleapis.com"})
+    custom_job = {
+        "display_name": job_name,
+        "job_spec": {
+            "worker_pool_specs": [{
+                "machine_spec": {
+                    "machine_type": spec["machine_type"],
+                    "accelerator_type": spec["accelerator_type"],
+                    "accelerator_count": 1,
+                },
+                "replica_count": 1,
+                "disk_spec": {"boot_disk_type": "pd-ssd", "boot_disk_size_gb": 100},
+                "python_package_spec": {
+                    "executor_image_uri": CONTAINER_URI,
+                    "package_uris": [package_uri],
+                    "python_module": module_name,
+                    "args": job_args,
+                },
+            }],
+            "scheduling": {"strategy": strategy},
+            "base_output_directory": {
+                "output_uri_prefix": f"{STAGING_BUCKET}/aiplatform-output/{job_name}"},
+        },
+    }
+    job = client.create_custom_job(
+        parent=f"projects/{PROJECT_ID}/locations/{location}", custom_job=custom_job)
+
+    print(f"Created {job.name} ({job_name} in {location}).")
     print(f"Outputs: {STAGING_BUCKET}/{job_name}")
     return job
 
