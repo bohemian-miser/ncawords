@@ -19,16 +19,27 @@ CONTAINER_URI = "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-1.py310:late
 
 
 def build_and_upload_package():
+    """Build the sdist and upload it under a git-SHA-versioned name.
+
+    Spot jobs download their package when they START, not when submitted —
+    a shared mutable package name means queued jobs silently run whatever
+    code was uploaded last. Pinning by SHA makes runs reproducible.
+    """
     print("Building source package for 'nca'...")
     subprocess.run([sys.executable, "setup.py", "sdist", "--formats=gztar"], check=True)
     tar_path = "dist/nca-0.1.tar.gz"
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, check=True).stdout.strip()
+    except Exception:
+        sha = "unversioned"
+    blob_name = f"packages/nca-0.1-{sha}.tar.gz"
 
     client = storage.Client(project=PROJECT_ID)
     bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob("packages/nca-0.1.tar.gz")
-    blob.upload_from_filename(tar_path)
-    print(f"Uploaded package to {STAGING_BUCKET}/packages/nca-0.1.tar.gz")
-    return f"{STAGING_BUCKET}/packages/nca-0.1.tar.gz"
+    bucket.blob(blob_name).upload_from_filename(tar_path)
+    print(f"Uploaded package to {STAGING_BUCKET}/{blob_name}")
+    return f"{STAGING_BUCKET}/{blob_name}"
 
 
 def check_required_args(script_path, job_args):
