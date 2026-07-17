@@ -79,10 +79,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Submit a local Python script to Vertex AI for GPU training")
     p.add_argument("script", help="Path to your training script (e.g., nca/train_adaptive_cloud_stepped.py)")
     p.add_argument("--on-demand", action="store_true", help="Run on an On-Demand instance instead of Spot (costs more but starts immediately)")
-    args = p.parse_args()
+    args, extra_args = p.parse_known_args()
 
     if not os.path.exists(args.script):
         print(f"Error: Could not find script '{args.script}'")
         sys.exit(1)
 
-    submit_job(args.script, on_demand=args.on_demand)
+    submit_job(args.script, extra_args=extra_args, on_demand=args.on_demand)
