@@ -255,7 +255,8 @@ def rotate_stack(t, deg):
 def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
           log_every=100, snap_dir=None, rng_seed=0, growth="bfs",
-          rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None):
+          rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None,
+          letter_w=8.0):
     torch.manual_seed(sum(map(ord, text)) + 31)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}")
@@ -294,7 +295,8 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
                    {"steps": steps, "K": K, "glyph": glyph, "batch": batch,
                     "lr": lr, "rng_seed": rng_seed, "pool_size": pool_size,
                     "growth": growth, "rot_mode": rot_mode,
-                    "rot_at": rot_at, "rot_deg": rot_deg, "lifespan": lifespan},
+                    "rot_at": rot_at, "rot_deg": rot_deg, "lifespan": lifespan,
+                    "letter_w": letter_w},
                    channel_n, hidden_n, "single", steps, device)
 
     t0 = time.time()
@@ -317,8 +319,11 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
 
-        loss_a = F.mse_loss(x[:, 3:4], tgt_a)
-        loss_rgb = ((x[:, :3] - tgt_rgb) ** 2 * masks.unsqueeze(1)).sum() \
+        # Letter pixels are ~4% of the canvas; without upweighting the model
+        # learns blanket support and ignores the reveal entirely.
+        pix_w = 1.0 + letter_w * masks
+        loss_a = ((x[:, 3:4] - tgt_a) ** 2 * pix_w).mean()
+        loss_rgb = letter_w * ((x[:, :3] - tgt_rgb) ** 2 * masks.unsqueeze(1)).sum() \
             / (masks.sum() * 3 * batch + 1e-8)
         loss = loss_a + loss_rgb
 
@@ -400,6 +405,8 @@ if __name__ == "__main__":
     p.add_argument("--lifespan", type=int, default=None,
                    help="Support cells die after this many frames unless on "
                         "the letter-connecting backbone")
+    p.add_argument("--letter-w", type=float, default=8.0,
+                   help="Loss upweight on letter pixels")
     p.add_argument("--preview", action="store_true",
                    help="Only generate proposed TARGET frames, no training")
     a = p.parse_args()
@@ -412,4 +419,4 @@ if __name__ == "__main__":
         train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
               log_every=a.log_every, snap_dir=a.snap_dir, growth=a.growth,
               rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg,
-              lifespan=a.lifespan)
+              lifespan=a.lifespan, letter_w=a.letter_w)
