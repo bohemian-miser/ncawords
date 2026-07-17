@@ -224,6 +224,7 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
 
         if step % log_every == 0 or step == steps - 1:
             if snap_dir:
+                os.makedirs(snap_dir, exist_ok=True)
                 try:
                     tgt_img_arr = tgt_chars[0, 3:4]
                     Image.fromarray((tgt_img_arr * 255).astype(np.uint8)).resize((target_chars.shape[3] * 8, target_chars.shape[2] * 8), getattr(Image, 'Resampling', Image).NEAREST).save(Path(snap_dir) / f'TARGET_{step:05d}.png')
