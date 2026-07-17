@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from nca.model import NCA, to_rgba, to_rgb
 from nca.train import FONT_PATH, char_color, SamplePool
+from nca.checkpoint import save_checkpoint, try_resume
 
 PITCH = 14          # Lower pitch for closer letters
 MARGIN = 6          # Lower margin
@@ -171,12 +172,14 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
 
     t0 = time.time()
     noise_idx = 0.60
+    start_step, ckpt_extra = try_resume(snap_dir, model, opt, sched, pool, device)
+    noise_idx = ckpt_extra.get("noise_idx", noise_idx)
     recent_losses = []
-    
+
     fade_start_step = int(steps * 0.6)
     fade_end_step = int(steps * 0.9)
-    
-    for step in range(steps):
+
+    for step in range(start_step, steps):
         if step <= fade_start_step:
             ratio = 0.0
         elif step >= fade_end_step:
@@ -249,6 +252,8 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
                   f"({(time.time() - t0):.1f}s)", flush=True)
             if snap_dir:
                 torch.save(model.state_dict(), str(Path(snap_dir) / 'latest.pth'))
+                save_checkpoint(snap_dir, step, model, opt, sched, pool,
+                                extra={"noise_idx": noise_idx})
                 save_word_png(model, text, channel_n,
                               Path(snap_dir) / f"{text}_{step:05d}.png",
                               seed_type, device)

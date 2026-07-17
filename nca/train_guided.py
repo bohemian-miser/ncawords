@@ -11,6 +11,7 @@ from PIL import Image
 from nca.model import NCA, to_rgba, make_seed
 from nca.train import damage_mask, SamplePool
 from nca.experiment import Experiment
+from nca.checkpoint import save_checkpoint, try_resume
 
 class GuidedExperiment(Experiment):
     ID = "guided"
@@ -88,7 +89,8 @@ class GuidedExperiment(Experiment):
         h, w = 40, 40
 
         t0 = time.time()
-        for step in range(total_steps):
+        start_step, _ = try_resume(self.output_dir, model, opt, sched, pool, device)
+        for step in range(start_step, total_steps):
             target = self.load_target(step, device).repeat(self.batch, 1, 1, 1)
             
             idx, x = pool.sample(self.batch)
@@ -126,6 +128,7 @@ class GuidedExperiment(Experiment):
                       f"({(time.time() - t0):.1f}s)", flush=True)
                 try:
                     torch.save(model.state_dict(), str(self.output_dir / 'latest.pth'))
+                    save_checkpoint(self.output_dir, step, model, opt, sched, pool)
                     self.save_word_png(model, step, device=device)
                     # For visualization logic: UI wants TARGET_{step}.png too
                     tgt_path_out = self.output_dir / f"TARGET_{step:05d}.png"

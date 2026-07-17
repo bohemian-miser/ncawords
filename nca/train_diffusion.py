@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from nca.model import NCA, to_rgba, to_rgb
 from nca.train import FONT_PATH, char_color, SamplePool
+from nca.checkpoint import save_checkpoint, try_resume
 
 PITCH = 14          # Lower pitch for closer letters
 MARGIN = 6          # Lower margin
@@ -164,9 +165,10 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
         opt, milestones=[int(steps * 0.8)], gamma=0.1)
 
     tgt_single = torch.from_numpy(tgt).to(device) # [4, h, w]
-    
+
     t0 = time.time()
-    for step in range(steps):
+    start_step, _ = try_resume(snap_dir, model, opt, sched, device=device)
+    for step in range(start_step, steps):
         # 1. Ask curriculum for noise brackets
         input_noise, target_noise = get_curriculum_pair(step, steps)
         
@@ -217,6 +219,7 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
                         pass
                 
                 torch.save(model.state_dict(), Path(snap_dir) / "latest.pth")
+                save_checkpoint(snap_dir, step, model, opt, sched)
 
     print(f"Final loss for {text} (diffusion): {loss.item():.5f}")
     return model
