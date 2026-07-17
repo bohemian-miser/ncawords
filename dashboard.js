@@ -40,12 +40,13 @@ fetch('/api/methods?t=' + Date.now())
         initializeDropdown();
         
         cardTrackers = methods.map(m => ({
-            dir: m.dir, 
+            dir: m.dir,
             cardObj: document.getElementById(`card_${m.id}`),
-            imgObj: document.getElementById(`live_${m.id}`), 
-            tgtObj: document.getElementById(`live_tgt_${m.id}`), 
-            statusObj: document.getElementById(`live_status_${m.id}`), 
-            lastKnownStep: -100 
+            imgObj: document.getElementById(`live_${m.id}`),
+            tgtObj: document.getElementById(`live_tgt_${m.id}`),
+            statusObj: document.getElementById(`live_status_${m.id}`),
+            vertexState: m.vertex_state || null,
+            lastKnownStep: -100
         }));
 
         // Connect to SSE instead of polling!
