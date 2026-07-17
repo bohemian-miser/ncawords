@@ -51,8 +51,17 @@ def check_required_args(script_path, job_args):
         )
 
 
+# GPU tiers. Tiny-grid NCA training is kernel-launch-bound, so measure
+# before assuming a bigger card helps (see the t4-vs-l4 benchmark runs).
+MACHINES = {
+    "t4":   {"machine_type": "n1-standard-4",  "accelerator_type": "NVIDIA_TESLA_T4"},
+    "l4":   {"machine_type": "g2-standard-4",  "accelerator_type": "NVIDIA_L4"},
+    "a100": {"machine_type": "a2-highgpu-1g",  "accelerator_type": "NVIDIA_TESLA_A100"},
+}
+
+
 def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
-               location=LOCATION, package_uri=None):
+               location=LOCATION, package_uri=None, machine="t4"):
     aiplatform.init(project=PROJECT_ID, location=location, staging_bucket=STAGING_BUCKET)
 
     if package_uri is None:
@@ -88,10 +97,11 @@ def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
     else:
         print("Submitting as SPOT job (queued & discounted).")
 
+    spec = MACHINES[machine]
     job.run(
         args=job_args,
-        machine_type="n1-standard-4",
-        accelerator_type="NVIDIA_TESLA_T4",
+        machine_type=spec["machine_type"],
+        accelerator_type=spec["accelerator_type"],
         accelerator_count=1,
         scheduling_strategy=strategy,
         sync=False,
@@ -113,6 +123,8 @@ if __name__ == "__main__":
                    help="Run on an On-Demand instance instead of Spot (costs more but starts immediately)")
     p.add_argument("--job-name", default=None, help="Override the Vertex display name / output dir name")
     p.add_argument("--location", default=LOCATION, help=f"Vertex region (default {LOCATION})")
+    p.add_argument("--machine", default="t4", choices=sorted(MACHINES),
+                   help="GPU tier (default t4)")
     args, passthrough = p.parse_known_args()
 
     if not os.path.exists(args.script):
@@ -120,4 +132,5 @@ if __name__ == "__main__":
         sys.exit(1)
 
     submit_job(args.script, extra_args=passthrough, job_name=args.job_name,
-               on_demand=args.on_demand, location=args.location)
+               on_demand=args.on_demand, location=args.location,
+               machine=args.machine)
