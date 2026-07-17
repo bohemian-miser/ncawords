@@ -11,6 +11,7 @@ from nca.model import NCA, to_rgba, to_rgb
 from nca.train import FONT_PATH, char_color, damage_mask, SamplePool
 from nca.experiment import Experiment
 from nca.checkpoint import save_checkpoint, try_resume
+from nca.runmeta import RunMeta, export_run_weights
 
 def word_geometry(text):
     PITCH = 14
@@ -205,6 +206,11 @@ class DynamicOrganicExperiment(Experiment):
             noise_idx = ckpt_extra.get("noise_idx", noise_idx)
             organic_seed = ckpt_extra.get("organic_seed", organic_seed)
             tgt, target = get_target(organic_seed)
+        meta = RunMeta(self.output_dir, self.text, "nca.train_dynamic_organic",
+                       {"steps": total_steps, "update_every": self.update_every,
+                        "support_vol": self.support_vol, "no_noise": self.no_noise,
+                        "batch": self.batch, "lr": self.lr, "damage_n": self.damage_n},
+                       self.channel_n, self.hidden_n, self.seed_type, total_steps, device)
         for step in range(start_step, total_steps):
             if step % self.update_every == 0:
                 organic_seed += 1
@@ -267,6 +273,9 @@ class DynamicOrganicExperiment(Experiment):
                 torch.save(model.state_dict(), str(self.output_dir / 'latest.pth'))
                 save_checkpoint(self.output_dir, step, model, opt, sched, pool,
                                 extra={"noise_idx": noise_idx, "organic_seed": organic_seed})
+                meta.log(step, loss.item(), noise_idx=noise_idx,
+                         organic_seed=organic_seed)
+                export_run_weights(model, self.output_dir, self.text)
                 # Output COMP_{step:05d}.png so it runs in UI alongside targets
                 self.save_word_png(model, self.output_dir / f"COMP_{step:05d}.png", device)
 

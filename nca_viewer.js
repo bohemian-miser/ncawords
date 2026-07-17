@@ -23,24 +23,25 @@ window.loadInteractiveModel = async function() {
     ctx.fillText("Loading weights...", canvas.width/2 - 50, canvas.height/2);
     
     let dir = document.getElementById("interactive-model-select").value;
-    let isNoise = dir.endsWith("_noise");
-    
+    let isNoise = !dir.startsWith("http") && dir.endsWith("_noise");
+
     // Map python folder names to JSON exports
     let baseJson = dir.replace('snaps_web_', 'word_').replace('snaps_', 'word_');
     if(baseJson === 'word_cloud') baseJson = 'word_cloud';
-    
+
     let jsonName = baseJson + '.json';
     let fallbackJsonName = baseJson.replace('_noise', '') + '.json';
-    
+
     try {
-        let res = await fetch(`docs/weights/${jsonName}`);
-        
+        // Absolute URLs (cloud-run weights in the public bucket) load as-is.
+        let res = await fetch(dir.startsWith("http") ? dir : `docs/weights/${jsonName}`);
+
         // If the specific _noise model wasn't exported, fallback to the base model weights
         if(!res.ok && isNoise) {
             res = await fetch(`docs/weights/${fallbackJsonName}`);
             if(!res.ok) throw new Error(`Could not load docs/weights/${fallbackJsonName}`);
         } else if (!res.ok) {
-            throw new Error(`Could not load docs/weights/${jsonName}`);
+            throw new Error(`Could not load ${dir.startsWith("http") ? dir : 'docs/weights/' + jsonName}`);
         }
         
         const weights = await res.json();

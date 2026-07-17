@@ -77,19 +77,30 @@ function applySeedFilter() {
     });
 }
 
+function addCloudWeightOptions(selectBox) {
+    // Cloud runs that published weights.json load straight from the bucket.
+    methods.forEach(m => {
+        if (!m.weights_url) return;
+        let opt = document.createElement('option');
+        opt.value = m.weights_url;
+        opt.innerText = m.title;
+        selectBox.appendChild(opt);
+    });
+}
+
 function initializeDropdown() {
     const selectBox = document.getElementById("interactive-model-select");
     selectBox.innerHTML = '';
-    
+
     fetch('docs/weights/index.json?t=' + Date.now())
         .then(r => r.json())
         .then(idx => {
             methods.forEach(m => {
-                if (m.id === 'diffusion') return;
-                
+                if (m.id === 'diffusion' || m.cloud) return;
+
                 let dirName = m.dir.replace('/', '');
                 let lookupName = dirName.replace('snaps_web_', '').replace('snaps_', '');
-                
+
                 if (idx.words.includes(lookupName) || m.id === 'guided' || m.id === 'cloud') {
                     let opt = document.createElement('option');
                     opt.value = dirName;
@@ -97,15 +108,17 @@ function initializeDropdown() {
                     selectBox.appendChild(opt);
                 }
             });
+            addCloudWeightOptions(selectBox);
         })
         .catch(err => {
             methods.forEach(m => {
-                if (m.id === 'diffusion') return;
+                if (m.id === 'diffusion' || m.cloud) return;
                 let opt = document.createElement('option');
                 opt.value = m.dir.replace('/', '');
                 opt.innerText = m.title;
                 selectBox.appendChild(opt);
             });
+            addCloudWeightOptions(selectBox);
         });
 }
 

@@ -36,7 +36,7 @@ VERTEX_LOCATION = "us-central1"
 BUCKET_NAME = "recipe-lanes-nca-jobs"
 PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
 
-_cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}}
+_cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}, "weights": []}
 _cloud_refreshing = threading.Lock()
 
 
@@ -73,6 +73,7 @@ def _fetch_cloud_state_now():
         print(f"Warning: could not list Vertex jobs: {e}")
 
     runs = {}
+    weights = []
     try:
         from google.cloud import storage
         client = storage.Client(project=PROJECT_ID)
@@ -86,10 +87,13 @@ def _fetch_cloud_state_now():
                 except ValueError:
                     continue
                 runs[run] = max(runs.get(run, -1), step)
+            elif fname == "weights.json":
+                weights.append(run)
     except Exception as e:
         print(f"Warning: could not list bucket runs: {e}")
 
-    _cloud_cache.update({"t": time.time(), "runs": runs, "jobs": jobs})
+    _cloud_cache.update({"t": time.time(), "runs": runs, "jobs": jobs,
+                         "weights": weights})
     return _cloud_cache
 
 
@@ -112,7 +116,7 @@ def get_methods():
         if run_id in local_ids:
             continue
         state = cloud["jobs"].get(run, "")
-        methods.append({
+        entry = {
             "id": run_id,
             "title": f"☁ {run}",
             "dir": f"{PUBLIC_BASE}{run}/",
@@ -120,7 +124,10 @@ def get_methods():
             "seedType": "cloud",
             "cloud": True,
             "vertex_state": state,
-        })
+        }
+        if run in cloud["weights"]:
+            entry["weights_url"] = f"{PUBLIC_BASE}{run}/weights.json"
+        methods.append(entry)
     return methods
 
 @app.get("/api/notes")
