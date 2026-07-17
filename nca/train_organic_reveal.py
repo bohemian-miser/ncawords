@@ -1,0 +1,257 @@
+"""Organic exploration that reveals letters as it finds them.
+
+A support structure grows outward from a seed with a rotating directional
+bias. When it touches a character, that character fades in over a few
+increments and its pixels join the growth frontier. Training is
+state -> next-state over a persistent pool of trajectories: the model
+receives its own state at increment k and is trained toward the target at
+increment k+1, so it learns the growth process itself.
+
+Loss: alpha (presence) everywhere; RGB only on letter pixels — the color
+of the organic support is unconstrained ("something is there" is enough).
+Each pool trajectory runs at a fixed 0/90/180/270 deg rotation.
+"""
+import argparse
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from PIL import Image, ImageDraw, ImageFont
+
+from nca.model import NCA, to_rgb
+from nca.train import FONT_PATH, char_color
+from nca.checkpoint import save_checkpoint, try_resume
+from nca.runmeta import RunMeta, export_run_weights
+
+CANVAS = 72          # square so 90-degree rotations are exact
+SUPPORT_ALPHA = 0.6  # target presence level for support-only cells
+REVEAL_STEPS = 6     # increments for a touched character to fade in
+
+
+def render_chars(text, glyph=12):
+    """Per-character premultiplied-RGBA layers centered on the square canvas."""
+    font = ImageFont.truetype(FONT_PATH, glyph)
+    pitch, n = 14, len(text)
+    x0 = (CANVAS - pitch * n) // 2 + pitch // 2
+    layers = []
+    for i, ch in enumerate(text):
+        img = Image.new("RGBA", (CANVAS, CANVAS), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        l, t, r, b = draw.textbbox((0, 0), ch, font=font)
+        x = x0 + pitch * i - (r - l) / 2 - l
+        y = (CANVAS - (b - t)) / 2 - t
+        draw.text((x, y), ch, font=font, fill=char_color(ch) + (255,))
+        arr = np.asarray(img, dtype=np.float32) / 255.0
+        arr[..., :3] *= arr[..., 3:]
+        layers.append(arr.transpose(2, 0, 1))  # [4, H, W]
+    return layers
+
+
+def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
+                bias_turns=1.5):
+    """Precompute the K target frames of the exploration process.
+
+    Returns rgb [K,3,H,W], alpha [K,1,H,W], rgb_mask [1,H,W] (letter pixels).
+    """
+    rng = np.random.default_rng(rng_seed)
+    H = W = CANVAS
+    layers = render_chars(text, glyph)
+    char_pix = [l[3] > 0.05 for l in layers]
+
+    mask = np.zeros((H, W), bool)
+    mask[H // 2, W // 2] = True
+    reveal_at = [None] * len(layers)   # increment when char was touched
+
+    yy, xx = np.mgrid[0:H, 0:W]
+    frames_rgb, frames_a = [], []
+    neigh_off = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+    for k in range(K):
+        # Frontier expansion with a rotating directional bias.
+        theta = 2 * np.pi * bias_turns * k / K
+        bias = np.array([np.sin(theta), np.cos(theta)])  # (dy, dx)
+        grow = np.zeros_like(mask)
+        for dy, dx in neigh_off:
+            cand = np.roll(np.roll(mask, dy, 0), dx, 1) & ~mask
+            d = np.array([dy, dx]) / np.hypot(dy, dx)
+            p = np.clip(join_p + bias_gain * float(d @ bias), 0.05, 0.95)
+            grow |= cand & (rng.random((H, W)) < p)
+        mask |= grow
+
+        # Characters touched by the mask start fading in; fully revealed
+        # characters join the mask so growth continues from their border.
+        for ci, pix in enumerate(char_pix):
+            if reveal_at[ci] is None and (mask & pix).any():
+                reveal_at[ci] = k
+            if reveal_at[ci] is not None and k - reveal_at[ci] >= REVEAL_STEPS:
+                mask |= pix
+
+        rgb = np.zeros((3, H, W), np.float32)
+        alpha = np.zeros((H, W), np.float32)
+        alpha[mask] = SUPPORT_ALPHA
+        for ci, layer in enumerate(layers):
+            if reveal_at[ci] is None:
+                continue
+            rev = min(1.0, (k - reveal_at[ci] + 1) / REVEAL_STEPS)
+            a = layer[3] * rev
+            on = a > alpha
+            for c in range(3):
+                rgb[c] = np.where(on, layer[c] * rev, rgb[c])
+            alpha = np.maximum(alpha, a)
+        frames_rgb.append(rgb)
+        frames_a.append(alpha[None])
+
+    rgb_mask = np.zeros((1, H, W), np.float32)
+    for pix in char_pix:
+        rgb_mask[0][pix] = 1.0
+    return (np.stack(frames_rgb), np.stack(frames_a), rgb_mask)
+
+
+def frame_png(rgb, alpha, path, upscale=6):
+    """Render a target frame: letters in color, support as gray presence."""
+    a = alpha[0]
+    img = np.ones((CANVAS, CANVAS, 3), np.float32)
+    for c in range(3):
+        img[..., c] = 1 - a + rgb[c]
+    Image.fromarray((np.clip(img, 0, 1) * 255).astype(np.uint8)) \
+        .resize((CANVAS * upscale, CANVAS * upscale), Image.NEAREST).save(path)
+
+
+def make_seed_state(channel_n, device):
+    x = torch.zeros(channel_n, CANVAS, CANVAS, device=device)
+    x[3:, CANVAS // 2, CANVAS // 2] = 1.0
+    return x
+
+
+def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
+          batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
+          log_every=100, snap_dir=None, rng_seed=0):
+    torch.manual_seed(sum(map(ord, text)) + 31)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Training on device: {device}")
+
+    rgb_np, a_np, mask_np = grow_frames(text, K, glyph, rng_seed)
+    rgb_f = torch.from_numpy(rgb_np).to(device)      # [K,3,H,W]
+    a_f = torch.from_numpy(a_np).to(device)          # [K,1,H,W]
+    rgb_mask = torch.from_numpy(mask_np).to(device)  # [1,H,W]
+
+    if snap_dir:
+        Path(snap_dir).mkdir(parents=True, exist_ok=True)
+        frame_png(rgb_np[-1], a_np[-1], Path(snap_dir) / "target.png")
+
+    model = NCA(channel_n, hidden_n=hidden_n).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.MultiStepLR(
+        opt, milestones=[int(steps * 0.8)], gamma=0.1)
+
+    # Persistent trajectories: state, current frame index, fixed rotation.
+    pool = torch.stack([make_seed_state(channel_n, device)] * pool_size)
+    pool_k = torch.zeros(pool_size, dtype=torch.long)
+    pool_rot = torch.arange(pool_size) % 4
+
+    start_step, _ = try_resume(snap_dir, model, opt, sched, device=device)
+
+    meta = RunMeta(snap_dir, text, "nca.train_organic_reveal",
+                   {"steps": steps, "K": K, "glyph": glyph, "batch": batch,
+                    "lr": lr, "rng_seed": rng_seed, "pool_size": pool_size},
+                   channel_n, hidden_n, "single", steps, device)
+
+    t0 = time.time()
+    for step in range(start_step, steps):
+        idx = torch.randperm(pool_size)[:batch]
+        x = pool[idx].clone()
+        ks = pool_k[idx]
+        rots = pool_rot[idx]
+
+        tgt_rgb = torch.stack([torch.rot90(rgb_f[min(k + 1, K - 1)], r.item(), (1, 2))
+                               for k, r in zip(ks, rots)])
+        tgt_a = torch.stack([torch.rot90(a_f[min(k + 1, K - 1)], r.item(), (1, 2))
+                             for k, r in zip(ks, rots)])
+        masks = torch.stack([torch.rot90(rgb_mask, r.item(), (1, 2)) for r in rots])
+
+        n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
+        x = model(x, steps=n_ca)
+
+        loss_a = F.mse_loss(x[:, 3:4], tgt_a)
+        loss_rgb = ((x[:, :3] - tgt_rgb) ** 2 * masks.unsqueeze(1)).sum() \
+            / (masks.sum() * 3 * batch + 1e-8)
+        loss = loss_a + loss_rgb
+
+        opt.zero_grad()
+        loss.backward()
+        with torch.no_grad():
+            for p in model.parameters():
+                if p.grad is not None:
+                    p.grad /= (p.grad.norm() + 1e-8)
+        opt.step()
+        sched.step()
+
+        with torch.no_grad():
+            pool[idx] = x.detach()
+            for j, i in enumerate(idx):
+                if ks[j] + 1 >= K - 1:   # trajectory done: restart it
+                    pool[i] = make_seed_state(channel_n, device)
+                    pool_k[i] = 0
+                    pool_rot[i] = torch.randint(0, 4, (1,))
+                else:
+                    pool_k[i] = ks[j] + 1
+
+        if step % log_every == 0 or step == steps - 1:
+            print(f"[organic_reveal_{text}] step {step} loss {loss.item():.5f} "
+                  f"(a {loss_a.item():.5f} rgb {loss_rgb.item():.5f}) "
+                  f"k_max {int(pool_k.max())} ({time.time() - t0:.1f}s)", flush=True)
+            if snap_dir:
+                s = f"{step:05d}"
+                j = int(torch.argmax(ks).item())
+                img = to_rgb(x)[j].detach().cpu().clamp(0, 1).permute(1, 2, 0).numpy()
+                Image.fromarray((img * 255).astype(np.uint8)) \
+                    .resize((CANVAS * 6, CANVAS * 6), Image.NEAREST) \
+                    .save(Path(snap_dir) / f"COMP_{s}.png")
+                kj = min(int(ks[j]) + 1, K - 1)
+                rj = int(rots[j])
+                frame_png(np.rot90(rgb_np[kj], rj, (1, 2)).copy(),
+                          np.rot90(a_np[kj], rj, (1, 2)).copy(),
+                          Path(snap_dir) / f"TARGET_{s}.png")
+                torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
+                save_checkpoint(snap_dir, step, model, opt, sched)
+                meta.log(step, loss.item(), loss_alpha=round(loss_a.item(), 6),
+                         loss_rgb=round(loss_rgb.item(), 6))
+                export_run_weights(model, snap_dir, text, glyph,
+                                   grid_w=CANVAS, grid_h=CANVAS)
+
+    print(f"Final loss for {text} (organic reveal): {loss.item():.5f}")
+    return model
+
+
+def preview_targets(text, out_dir, K=60, glyph=12, rng_seed=0, every=4):
+    """Write the proposed target frames for LGTM before training."""
+    rgb, a, _ = grow_frames(text, K, glyph, rng_seed)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    for k in range(0, K, every):
+        frame_png(rgb[k], a[k], out / f"TARGET_{k:05d}.png")
+    frame_png(rgb[-1], a[-1], out / f"TARGET_{K-1:05d}.png")
+    print(f"Wrote {len(range(0, K, every)) + 1} proposed frames to {out}")
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--text", required=True)
+    p.add_argument("--steps", type=int, default=8000)
+    p.add_argument("--frames", type=int, default=60)
+    p.add_argument("--rng-seed", type=int, default=0)
+    p.add_argument("--log-every", type=int, default=100)
+    p.add_argument("--snap-dir", default=None)
+    p.add_argument("--preview", action="store_true",
+                   help="Only generate proposed TARGET frames, no training")
+    a = p.parse_args()
+
+    if a.preview:
+        preview_targets(a.text, a.snap_dir or "snaps_organic_reveal_preview",
+                        K=a.frames, rng_seed=a.rng_seed)
+    else:
+        train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
+              log_every=a.log_every, snap_dir=a.snap_dir)
