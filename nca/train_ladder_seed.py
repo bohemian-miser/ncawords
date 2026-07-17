@@ -79,6 +79,7 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
             m = damage_mask_rect(n_dmg, h, w, device)
             x[-n_dmg:] = x[-n_dmg:] * m
 
+        x_start = x[-1:].detach().clone()   # damaged-most input state for snapshots
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
 
@@ -106,12 +107,13 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
                   f"({time.time() - t0:.1f}s)", flush=True)
             if snap_dir:
                 s = f"{step:05d}"
-                img = to_rgba(x)[0].detach().cpu().clamp(0, 1)
-                a = img[3:4]
-                vis = (1 - a + img[:3]).clamp(0, 1).permute(1, 2, 0).numpy()
-                Image.fromarray((vis * 255).astype(np.uint8)) \
-                    .resize((w * 8, h * 8), Image.NEAREST) \
-                    .save(Path(snap_dir) / f"COMP_{s}.png")
+                for tag, t in [("COMP", to_rgba(x)[-1]), ("START", to_rgba(x_start)[0])]:
+                    img = t.detach().cpu().clamp(0, 1)
+                    a = img[3:4]
+                    vis = (1 - a + img[:3]).clamp(0, 1).permute(1, 2, 0).numpy()
+                    Image.fromarray((vis * 255).astype(np.uint8)) \
+                        .resize((w * 8, h * 8), Image.NEAREST) \
+                        .save(Path(snap_dir) / f"{tag}_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
                 meta.log(step, loss.item(), noise_idx=noise_idx)
                 export_run_weights(model, snap_dir, text, glyph)

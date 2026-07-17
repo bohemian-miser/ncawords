@@ -349,8 +349,10 @@ function updateActiveModalUI() {
             const div = document.createElement('div');
             div.className = 'gallery-item';
             div.innerHTML = `
-                <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='${activeModalDir}target.png'; this.onerror=null;" alt="Target Step ${s}">
-                <img src="${activeModalDir}COMP_${stepStr}.png" onerror="this.style.display='none'" alt="Step ${s}">
+                <img src="${activeModalDir}START_${stepStr}.png" onerror="this.style.display='none'" alt="Start ${s}" title="starting state (post-damage)">
+                <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='${activeModalDir}target.png'; this.onerror=null;" alt="Target Step ${s}" title="target">
+                <img src="${activeModalDir}COMP_${stepStr}.png" onerror="this.style.display='none'" alt="Step ${s}" title="model output">
+                <img src="${activeModalDir}RECOV_${stepStr}.png" onerror="this.style.display='none'" alt="Recovered ${s}" title="damaged sample after CA">
                 <span>Step ${s}</span>
             `;
             gallery.appendChild(div);

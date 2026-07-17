@@ -189,6 +189,7 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
             m = damage_mask_rect(damage_n, h, w, device)
             x[-damage_n:] *= m
 
+        x_start = x[-1:].detach().clone()   # damaged input, for START snapshots
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
         if noise_idx > 0:
@@ -245,6 +246,12 @@ def train(text, steps=4000, glyph=12, channel_n=16, hidden_n=80,
                                 extra={"noise_idx": noise_idx})
                 meta.log(step, loss.item(), noise_idx=noise_idx)
                 export_run_weights(model, snap_dir, text, glyph)
+                for tag, t in [("START", x_start[0]), ("RECOV", x[-1])]:
+                    img = to_rgba(t[None])[0].detach().cpu().clamp(0, 1)
+                    vis = (1 - img[3:4] + img[:3]).clamp(0, 1).permute(1, 2, 0).numpy()
+                    Image.fromarray((vis * 255).astype(np.uint8)) \
+                        .resize((w * 8, h * 8), Image.NEAREST) \
+                        .save(Path(snap_dir) / f"{tag}_{step:05d}.png")
                 save_word_png(model, text, channel_n,
                               Path(snap_dir) / f"{text}_{step:05d}.png",
                               seed_type, device)
