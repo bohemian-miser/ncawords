@@ -3,6 +3,7 @@ import json
 import time
 import glob
 import asyncio
+import threading
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Dict, Optional, Any
@@ -36,13 +37,31 @@ BUCKET_NAME = "recipe-lanes-nca-jobs"
 PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
 
 _cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}}
+_cloud_refreshing = threading.Lock()
 
 
-def fetch_cloud_state(ttl=20):
+def fetch_cloud_state(ttl=60, blocking=True):
+    """Cloud listings take seconds; non-blocking callers (the SSE tick) get
+    the stale cache back immediately while a thread refreshes it."""
     now = time.time()
     if now - _cloud_cache["t"] < ttl:
         return _cloud_cache
+    if not blocking:
+        if _cloud_refreshing.acquire(blocking=False):
+            def _refresh():
+                try:
+                    _fetch_cloud_state_now()
+                finally:
+                    _cloud_refreshing.release()
+            threading.Thread(target=_refresh, daemon=True).start()
+        return _cloud_cache
+    with _cloud_refreshing:
+        if time.time() - _cloud_cache["t"] < ttl:
+            return _cloud_cache
+        return _fetch_cloud_state_now()
 
+
+def _fetch_cloud_state_now():
     jobs = {}
     try:
         from google.cloud import aiplatform
@@ -70,7 +89,7 @@ def fetch_cloud_state(ttl=20):
     except Exception as e:
         print(f"Warning: could not list bucket runs: {e}")
 
-    _cloud_cache.update({"t": now, "runs": runs, "jobs": jobs})
+    _cloud_cache.update({"t": time.time(), "runs": runs, "jobs": jobs})
     return _cloud_cache
 
 
@@ -148,7 +167,7 @@ def fetch_status_sync():
 
     # Cloud runs keyed by their public URL prefix, matching the 'dir' the
     # /api/methods endpoint hands to the frontend.
-    cloud = fetch_cloud_state()
+    cloud = fetch_cloud_state(blocking=False)
     for run, max_step in cloud["runs"].items():
         status[f"{PUBLIC_BASE}{run}/"] = max_step
     return status
