@@ -62,9 +62,12 @@ MACHINES = {
 
 def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
                location=LOCATION, package_uri=None, machine="t4"):
-    aiplatform.init(project=PROJECT_ID, location=location, staging_bucket=STAGING_BUCKET)
-
+    # location is passed explicitly to the job object (NOT via global
+    # aiplatform.init): with sync=False the submission happens on a
+    # background thread, and global init state races across submissions.
     if package_uri is None:
+        aiplatform.init(project=PROJECT_ID, location=location,
+                        staging_bucket=STAGING_BUCKET)
         package_uri = build_and_upload_package()
 
     if not job_name:
@@ -81,13 +84,16 @@ def submit_job(script_path, extra_args=None, job_name=None, on_demand=False,
 
     check_required_args(script_path, job_args)
 
-    print(f"Submitting module '{module_name}' to Vertex AI CustomJob ({job_name})...")
+    print(f"Submitting module '{module_name}' to Vertex AI CustomJob ({job_name}, {location})...")
     print(f"  args: {job_args}")
     job = aiplatform.CustomPythonPackageTrainingJob(
         display_name=job_name,
         python_package_gcs_uri=package_uri,
         python_module_name=module_name,
         container_uri=CONTAINER_URI,
+        project=PROJECT_ID,
+        location=location,
+        staging_bucket=STAGING_BUCKET,
     )
 
     strategy = aiplatform.compat.types.custom_job.Scheduling.Strategy.SPOT
