@@ -1,0 +1,376 @@
+let methods = [];
+let cardTrackers = [];
+const container = document.getElementById('cards-container');
+
+let serverState = {};
+let activeModalDir = null;
+let activeModalMaxStepRendered = -100;
+let staticMode = false;
+
+// Public bucket the training jobs write to; readable (and listable)
+// anonymously, so a static page needs no backend at all.
+const BUCKET = 'recipe-lanes-nca-jobs';
+const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
+const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name),nextPageToken&maxResults=1000`;
+
+async function listCloudRuns() {
+    const runs = {};
+    let pageToken = null;
+    do {
+        const res = await fetch(BUCKET_LIST + (pageToken ? `&pageToken=${pageToken}` : ''));
+        if (!res.ok) throw new Error(`bucket list failed: ${res.status}`);
+        const d = await res.json();
+        (d.items || []).forEach(({name}) => {
+            const i = name.indexOf('/');
+            if (i < 0) return;
+            const run = name.slice(0, i), fname = name.slice(i + 1);
+            if (!runs[run]) runs[run] = {maxStep: -1, hasWeights: false};
+            if (fname.startsWith('COMP_')) {
+                const s = parseInt(fname.slice(5, 10));
+                if (!isNaN(s)) runs[run].maxStep = Math.max(runs[run].maxStep, s);
+            } else if (fname === 'weights.json') {
+                runs[run].hasWeights = true;
+            }
+        });
+        pageToken = d.nextPageToken;
+    } while (pageToken);
+    return runs;
+}
+
+function cloudMethodsFrom(runs) {
+    return Object.keys(runs).sort().map(run => {
+        const m = {
+            id: 'cloud_' + run,
+            title: '☁ ' + run,
+            dir: BUCKET_BASE + run + '/',
+            desc: 'Vertex AI training run (live from the public bucket)',
+            seedType: 'cloud',
+            cloud: true
+        };
+        if (runs[run].hasWeights) m.weights_url = BUCKET_BASE + run + '/weights.json';
+        return m;
+    });
+}
+
+async function staticStatusLoop() {
+    try {
+        const runs = await listCloudRuns();
+        const status = {};
+        Object.entries(runs).forEach(([run, v]) => {
+            status[BUCKET_BASE + run + '/'] = v.maxStep;
+        });
+        serverState = status;
+        updateOverviewUI();
+        updateActiveModalUI();
+    } catch (e) {
+        console.error('bucket poll failed', e);
+    }
+    setTimeout(staticStatusLoop, 15000);
+}
+
+async function bootstrap() {
+    // Prefer the local orchestration server; fall back to reading the
+    // public bucket directly (gh-pages / any static hosting).
+    try {
+        const res = await fetch('/api/methods?t=' + Date.now());
+        if (!res.ok) throw new Error(`no backend (${res.status})`);
+        methods = await res.json();
+    } catch (e) {
+        staticMode = true;
+        methods = cloudMethodsFrom(await listCloudRuns());
+    }
+
+    // Build cards without innerHTML concatenations
+    methods.forEach(m => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.id = `card_${m.id}`;
+        card.onclick = () => openModal(m.title, m.dir, m.desc);
+
+        card.innerHTML = `
+            <h3>${m.title}</h3>
+            <div class="side-by-side">
+                <div>
+                    <div class="sub-desc">Live Target</div>
+                    <div class="img-container"><img id="live_tgt_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onerror="this.src='${m.dir}target.png'"></div>
+                </div>
+                <div>
+                    <div class="sub-desc">Latest Checkpoint</div>
+                    <div class="img-container"><img id="live_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></div>
+                </div>
+            </div>
+            <div class="status" id="live_status_${m.id}">Loading Server State...</div>
+        `;
+        container.appendChild(card);
+    });
+
+    initializeDropdown();
+
+    cardTrackers = methods.map(m => ({
+        dir: m.dir,
+        cardObj: document.getElementById(`card_${m.id}`),
+        imgObj: document.getElementById(`live_${m.id}`),
+        tgtObj: document.getElementById(`live_tgt_${m.id}`),
+        statusObj: document.getElementById(`live_status_${m.id}`),
+        vertexState: m.vertex_state || null,
+        lastKnownStep: -100
+    }));
+
+    if (staticMode) {
+        staticStatusLoop();
+    } else {
+        const evtSource = new EventSource("/api/status_stream");
+        evtSource.onmessage = function(event) {
+            serverState = JSON.parse(event.data);
+            updateOverviewUI();
+            updateActiveModalUI();
+        };
+        evtSource.onerror = function() {
+            console.error("SSE Connection Error");
+        };
+    }
+}
+
+bootstrap().catch(err => console.error("Dashboard bootstrap failed", err));
+    
+function applySeedFilter() {
+    const filterVal = document.getElementById('seed-filter').value;
+    methods.forEach(m => {
+        const el = document.getElementById(`card_${m.id}`);
+        if (!el) return;
+        if (filterVal === 'all') {
+            el.style.display = 'block';
+        } else if (filterVal === m.seedType) {
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+        }
+    });
+}
+
+function addCloudWeightOptions(selectBox) {
+    // Cloud runs that published weights.json load straight from the bucket.
+    methods.forEach(m => {
+        if (!m.weights_url) return;
+        let opt = document.createElement('option');
+        opt.value = m.weights_url;
+        opt.innerText = m.title;
+        selectBox.appendChild(opt);
+    });
+}
+
+function initializeDropdown() {
+    const selectBox = document.getElementById("interactive-model-select");
+    selectBox.innerHTML = '';
+
+    fetch('weights/index.json?t=' + Date.now())
+        .then(r => r.json())
+        .then(idx => {
+            methods.forEach(m => {
+                if (m.id === 'diffusion' || m.cloud) return;
+
+                let dirName = m.dir.replace('/', '');
+                let lookupName = dirName.replace('snaps_web_', '').replace('snaps_', '');
+
+                if (idx.words.includes(lookupName) || m.id === 'guided' || m.id === 'cloud') {
+                    let opt = document.createElement('option');
+                    opt.value = dirName;
+                    opt.innerText = m.title;
+                    selectBox.appendChild(opt);
+                }
+            });
+            addCloudWeightOptions(selectBox);
+        })
+        .catch(err => {
+            methods.forEach(m => {
+                if (m.id === 'diffusion' || m.cloud) return;
+                let opt = document.createElement('option');
+                opt.value = m.dir.replace('/', '');
+                opt.innerText = m.title;
+                selectBox.appendChild(opt);
+            });
+            addCloudWeightOptions(selectBox);
+        });
+}
+
+function updateOverviewUI() {
+    cardTrackers.forEach(ct => {
+        const currentHighest = serverState[ct.dir];
+        if (currentHighest !== undefined) {
+            if (currentHighest > ct.lastKnownStep) {
+                ct.lastKnownStep = currentHighest;
+                if (currentHighest === -1) {
+                    ct.lastStatusText = "No runs logged yet (Waiting on step 0)";
+                } else {
+                    ct.lastStatusText = `Latest: Step ${currentHighest} / 16000`;
+                    let stepStr = String(currentHighest).padStart(5, '0');
+                    if(ct.imgObj) {
+                        ct.imgObj.onerror = function() { this.src = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='; };
+                        ct.imgObj.src = `${ct.dir}COMP_${stepStr}.png?t=` + Date.now();
+                    }
+                    if(ct.tgtObj) ct.tgtObj.src = `${ct.dir}TARGET_${stepStr}.png?t=` + Date.now();
+                }
+            }
+            
+            if (!ct.cardObj || !ct.statusObj) return;
+            
+            if (ct.dir.includes('proposed_targets')) {
+                ct.cardObj.style.borderColor = '#4db8ff';
+                ct.statusObj.style.color = '#4db8ff';
+                ct.statusObj.innerText = '(Ready for training)';
+                if (ct.imgObj) ct.imgObj.style.display = 'none';
+            } else if (ct.vertexState) {
+                const done = ct.vertexState === 'SUCCEEDED';
+                ct.cardObj.style.borderColor = done ? '#00ff00' : '#ffaa00';
+                ct.statusObj.style.color = done ? '#00ff00' : '#ffaa00';
+                ct.statusObj.innerText = `${ct.lastStatusText || ''} (Vertex: ${ct.vertexState})`;
+            } else if (currentHighest >= 15900) {
+                ct.cardObj.style.borderColor = '#00ff00';
+                ct.statusObj.style.color = '#00ff00';
+                ct.statusObj.innerText = (ct.lastStatusText || '') + ' (DONE)';
+            } else if (currentHighest >= 0) {
+                ct.cardObj.style.borderColor = '#ffaa00';
+                ct.statusObj.style.color = '#ffaa00';
+                ct.statusObj.innerText = (ct.lastStatusText || '') + ' (RUNNING)';
+            } else {
+                ct.statusObj.innerText = (ct.lastStatusText || '');
+            }
+        }
+    });
+}
+
+window.openModal = function(title, dir, desc) {
+    document.getElementById('modal-title').innerText = title;
+    document.getElementById('modal-desc').innerText = desc || "No description available.";
+    
+    let btnBegin = document.getElementById('btn-begin-training');
+    if (dir.includes('proposed_targets')) {
+        btnBegin.style.display = 'inline-block';
+    } else {
+        btnBegin.style.display = 'none';
+    }
+    
+    const gallery = document.getElementById('modal-gallery');
+    gallery.innerHTML = '';
+    activeModalDir = dir;
+    activeModalMaxStepRendered = -100;
+    document.getElementById('modal').style.display = 'block';
+    updateActiveModalUI();
+    fetchNotes(dir);
+}
+
+function fetchNotes(dir) {
+    if (staticMode) {
+        document.getElementById('notes-list').innerHTML =
+            '<li><i>Notes need the orchestration server (read-only static site).</i></li>';
+        return;
+    }
+    fetch('/api/notes')
+        .then(r => r.json())
+        .then(notes_db => {
+            const list = document.getElementById('notes-list');
+            list.innerHTML = '';
+            if (notes_db[dir]) {
+                notes_db[dir].forEach(n => {
+                    const li = document.createElement('li');
+                    li.innerText = new Date(n.timestamp * 1000).toLocaleString() + ": " + n.note;
+                    list.appendChild(li);
+                });
+            } else {
+                list.innerHTML = '<li><i>No notes yet.</i></li>';
+            }
+        });
+}
+
+window.submitNote = function(event) {
+    event.stopPropagation();
+    if (staticMode) return;
+    const input = document.getElementById('note-input');
+    const note = input.value.trim();
+    if(!note || !activeModalDir) return;
+    
+    fetch('/api/notes', {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({dir: activeModalDir, note: note})
+    }).then(() => {
+        input.value = '';
+        fetchNotes(activeModalDir);
+    });
+}
+
+window.beginTraining = function(event) {
+    event.stopPropagation();
+    if(!activeModalDir) return;
+    fetch('/api/notes', {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({dir: activeModalDir, note: "[SYSTEM: BEGIN TRAINING]"})
+    }).then(() => {
+        fetchNotes(activeModalDir);
+        let tgtStatus = document.getElementById('live_status_proposed_targets');
+        if (tgtStatus) {
+            tgtStatus.innerText = "Training Started!";
+            tgtStatus.style.animation = "none";
+            tgtStatus.style.color = "#55ff55";
+        }
+    });
+}
+
+window.closeModal = function() {
+    document.getElementById('modal').style.display = 'none';
+    activeModalDir = null;
+}
+
+window.handleOverlayClick = function(event) {
+    closeModal();
+}
+
+window.handleContentClick = function(event) {
+    if (event.target.closest('#modal-notes') || event.target.closest('.gallery-item')) {
+        event.stopPropagation();
+    } else {
+        closeModal();
+        event.stopPropagation();
+    }
+}
+
+function updateActiveModalUI() {
+    if (!activeModalDir) return;
+    const maxStep = serverState[activeModalDir];
+    if (maxStep !== undefined && maxStep > activeModalMaxStepRendered) {
+        const gallery = document.getElementById('modal-gallery');
+        let start = Math.max(0, activeModalMaxStepRendered + 100);
+        if (activeModalMaxStepRendered === -100) start = 0;
+        
+        for (let s = start; s <= maxStep; s += 100) {
+            let stepStr = String(s).padStart(5, '0');
+            
+            const div = document.createElement('div');
+            div.className = 'gallery-item';
+            div.innerHTML = `
+                <img src="${activeModalDir}TARGET_${stepStr}.png" onerror="this.src='${activeModalDir}target.png'; this.onerror=null;" alt="Target Step ${s}">
+                <img src="${activeModalDir}COMP_${stepStr}.png" onerror="this.style.display='none'" alt="Step ${s}">
+                <span>Step ${s}</span>
+            `;
+            gallery.appendChild(div);
+        }
+        activeModalMaxStepRendered = maxStep;
+    }
+}
+
+window.prevInteractiveModel = function() {
+    const select = document.getElementById("interactive-model-select");
+    if (select.options.length > 0) {
+        select.selectedIndex = (select.selectedIndex - 1 + select.options.length) % select.options.length;
+        if(window.loadInteractiveModel) window.loadInteractiveModel();
+    }
+}
+
+window.nextInteractiveModel = function() {
+    const select = document.getElementById("interactive-model-select");
+    if (select.options.length > 0) {
+        select.selectedIndex = (select.selectedIndex + 1) % select.options.length;
+        if(window.loadInteractiveModel) window.loadInteractiveModel();
+    }
+}
