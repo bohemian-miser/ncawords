@@ -342,7 +342,8 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
                 if ks[j] + 1 >= K - 1:   # trajectory done: restart it
                     pool[i] = make_seed_state(channel_n, device)
                     pool_k[i] = 0
-                    pool_rot[i] = torch.randint(0, 4, (1,))
+                    if rot_mode == "aug90":
+                        pool_rot[i] = torch.randint(0, 4, (1,))
                 else:
                     pool_k[i] = ks[j] + 1
 

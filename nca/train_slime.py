@@ -183,12 +183,18 @@ if __name__ == "__main__":
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
+    p.add_argument("--sensor-d", type=float, default=5.0)
+    p.add_argument("--evap", type=float, default=0.12)
+    p.add_argument("--agents", type=int, default=4000)
+    p.add_argument("--substeps", type=int, default=3)
     p.add_argument("--preview", action="store_true")
     a = p.parse_args()
 
+    sim = {"sensor_d": a.sensor_d, "evap": a.evap,
+           "n_agents": a.agents, "substeps": a.substeps}
     if a.preview:
         preview_targets(a.snap_dir or "snaps_slime_preview",
                         K=a.frames, rng_seed=a.rng_seed)
     else:
         train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
-              log_every=a.log_every, snap_dir=a.snap_dir)
+              log_every=a.log_every, snap_dir=a.snap_dir, sim_kwargs=sim)

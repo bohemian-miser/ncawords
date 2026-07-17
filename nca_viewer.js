@@ -101,19 +101,29 @@ window.resetInteractive = function() {
 };
 
 window.noiseInteractive = function() {
+    // Immediate splash straight onto the 2D canvas — guaranteed visible
+    // feedback even before (or without) the engine.
+    const img = ctx.createImageData(canvas.width, canvas.height);
+    for (let i = 0; i < img.data.length; i += 4) {
+        img.data[i] = Math.random() * 255;
+        img.data[i + 1] = Math.random() * 255;
+        img.data[i + 2] = Math.random() * 255;
+        img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+
     if(!unit || !unit.ca) {
-        // Nothing loaded yet: load the selected model first, then fill.
+        // Nothing loaded yet: load the selected model, then fill its state.
         window.loadInteractiveModel().then(() => {
-            if(unit && unit.ca) window.noiseInteractive();
+            if(unit && unit.ca) unit.ca.reset(true);
         });
         return;
     }
     unit.ca.reset(true);
-    drawCA();
-    // Hold the animation briefly so the filled noise is actually visible —
-    // growth models can annihilate uniform noise within a few CA steps.
+    // Hold the animation so the noise state is visible — growth models can
+    // annihilate uniform noise within a few CA steps.
     if(window.interactiveLoop) clearTimeout(window.interactiveLoop);
-    window.interactiveLoop = setTimeout(window.runInteractiveLoop, 800);
+    window.interactiveLoop = setTimeout(window.runInteractiveLoop, 1000);
 };
 
 window.runInteractiveLoop = function() {

@@ -49,7 +49,7 @@ def parse_schedule(spec):
 
 
 def train(text, schedule="ladder+jumps", stage_mode="fixed", stage_steps=100,
-          stage_min=30, stage_cap=400, improve_factor=0.7,
+          stage_min=30, stage_cap=400, improve_factor=0.7, replay_p=0.0,
           glyph=12, channel_n=16, hidden_n=80, batch=8, lr=2e-3,
           ca_min=48, ca_max=64, log_every=50, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 7)
@@ -76,7 +76,7 @@ def train(text, schedule="ladder+jumps", stage_mode="fixed", stage_steps=100,
     baseline = ckpt_extra.get("baseline", None)
 
     meta = RunMeta(snap_dir, text, "nca.train_noise_ladder",
-                   {"schedule": schedule, "stages": stages,
+                   {"schedule": schedule, "stages": stages, "replay_p": replay_p,
                     "stage_mode": stage_mode, "stage_steps": stage_steps,
                     "stage_min": stage_min, "stage_cap": stage_cap,
                     "batch": batch, "lr": lr},
@@ -87,7 +87,14 @@ def train(text, schedule="ladder+jumps", stage_mode="fixed", stage_steps=100,
     step = start_step
     loss = None
     while stage_idx < len(stages):
-        input_noise, target_noise = stages[stage_idx]
+        # Replay: revisit a random earlier stage some of the time, so the
+        # final model doesn't catastrophically forget the high-noise regime.
+        replay = replay_p > 0 and stage_idx > 0 and float(torch.rand(1)) < replay_p
+        if replay:
+            ri = int(torch.randint(0, stage_idx, (1,)))
+            input_noise, target_noise = stages[ri]
+        else:
+            input_noise, target_noise = stages[stage_idx]
 
         with torch.no_grad():
             x0 = build_state(tgt_single, input_noise, channel_n, batch, device)
@@ -105,14 +112,15 @@ def train(text, schedule="ladder+jumps", stage_mode="fixed", stage_steps=100,
                     p.grad /= (p.grad.norm() + 1e-8)
         opt.step()
 
-        recent.append(loss.item())
-        if len(recent) > 10:
-            recent.pop(0)
-        avg = sum(recent) / len(recent)
+        if not replay:
+            recent.append(loss.item())
+            if len(recent) > 10:
+                recent.pop(0)
+            steps_in_stage += 1
+        avg = sum(recent) / len(recent) if recent else float("inf")
         if baseline is None and len(recent) == 10:
             baseline = avg
 
-        steps_in_stage += 1
         advance = False
         if stage_mode == "fixed":
             advance = steps_in_stage >= stage_steps
@@ -172,10 +180,13 @@ if __name__ == "__main__":
     p.add_argument("--stage-steps", type=int, default=100)
     p.add_argument("--stage-min", type=int, default=30)
     p.add_argument("--stage-cap", type=int, default=400)
+    p.add_argument("--replay-p", type=float, default=0.0,
+                   help="Probability of revisiting a random earlier stage per step")
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
     train(a.text, schedule=a.schedule, stage_mode=a.stage_mode,
           stage_steps=a.stage_steps, stage_min=a.stage_min,
-          stage_cap=a.stage_cap, log_every=a.log_every, snap_dir=a.snap_dir)
+          stage_cap=a.stage_cap, replay_p=a.replay_p,
+          log_every=a.log_every, snap_dir=a.snap_dir)

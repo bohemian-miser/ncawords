@@ -1,0 +1,21 @@
+<body style="margin:0">
+<iframe id="f" src="dashboard.html" style="width:1300px;height:900px;border:0"></iframe>
+<script>
+setTimeout(() => {
+  const w = document.getElementById('f').contentWindow;
+  try {
+    const sel = w.document.getElementById('interactive-model-select');
+    let found = '';
+    for (const o of sel.options) if (o.value.includes('noise-ladder-jumps-fixed')) { sel.value = o.value; found = o.value; }
+    fetch('/beacon?model=' + encodeURIComponent(found) + '&hasNoiseFn=' + (typeof w.noiseInteractive));
+    w.loadInteractiveModel();
+    setTimeout(() => {
+      w.noiseInteractive();
+      if (w.interactiveLoop) w.clearTimeout(w.interactiveLoop);  // freeze so the screenshot shows the filled state
+      fetch('/beacon?clicked=1');
+    }, 8000);
+  } catch (e) { fetch('/beacon?err=' + encodeURIComponent(e.message)); }
+}, 12000);
+</script>
+<img src="/slow.png" style="display:none">
+</body>
