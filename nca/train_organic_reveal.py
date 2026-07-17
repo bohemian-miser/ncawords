@@ -50,9 +50,44 @@ def render_chars(text, glyph=12):
     return layers
 
 
+BACKBONE_ALPHA = 0.85  # letter-connecting network strengthens to this
+
+
+def bfs_dist(net, sources, neigh_off):
+    """Chebyshev BFS distance through net from source cells (inf elsewhere)."""
+    dist = np.full(net.shape, np.inf, np.float32)
+    frontier = sources & net
+    dist[frontier] = 0
+    d = 0
+    while frontier.any():
+        d += 1
+        dil = np.zeros_like(frontier)
+        for dy, dx in neigh_off:
+            dil |= np.roll(np.roll(frontier, dy, 0), dx, 1)
+        newly = dil & net & (dist > d)
+        if not newly.any():
+            break
+        dist[newly] = d
+        frontier = newly
+    return dist
+
+
+def letter_paths(net, char_pix_on, neigh_off):
+    """Cells on shortest paths through net between consecutive letters."""
+    paths = np.zeros(net.shape, bool)
+    for a, b in zip(char_pix_on[:-1], char_pix_on[1:]):
+        da = bfs_dist(net, a, neigh_off)
+        db = bfs_dist(net, b, neigh_off)
+        total = da + db
+        if not np.isfinite(total).any():
+            continue   # not connected yet
+        paths |= total <= (total[np.isfinite(total)].min() + 1)
+    return paths
+
+
 def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
                 bias_turns=1.5, growth="bfs", step_len=3, branch_p=0.25,
-                max_walkers=20, max_dist=None):
+                max_walkers=20, max_dist=None, lifespan=None):
     """Precompute the K target frames of the exploration process.
 
     growth='bfs': probabilistic frontier expansion (blob with ragged edges).
@@ -69,6 +104,9 @@ def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
 
     mask = np.zeros((H, W), bool)
     mask[H // 2, W // 2] = True
+    birth = np.full((H, W), -1, np.int32)   # frame each support cell joined
+    birth[H // 2, W // 2] = 0
+    veins = np.zeros((H, W), bool)          # sticky letter-connecting network
     reveal_at = [None] * len(layers)   # increment when char was touched
     walkers = [(H / 2, W / 2, rng.uniform(0, 2 * np.pi))]
 
@@ -147,9 +185,29 @@ def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
             elif reveal_at[ci] is not None and k - reveal_at[ci] > REVEAL_STEPS:
                 mask |= pix
 
+        newly_joined = mask & (birth < 0)
+        birth[newly_joined] = k
+
+        # Lifespan: scout cells die at age `lifespan` unless they lie on a
+        # shortest path between adjacent letters — those become sticky veins
+        # that persist and strengthen while everything else churns.
+        if lifespan:
+            letters_on = np.zeros_like(mask)
+            on_list = []
+            for ci, pix in enumerate(char_pix):
+                if reveal_at[ci] is not None and k - reveal_at[ci] >= REVEAL_STEPS:
+                    letters_on |= pix
+                    on_list.append(pix)
+            if len(on_list) >= 2:
+                veins |= letter_paths(mask | letters_on, on_list, neigh_off) & mask
+            dying = mask & ~letters_on & ~veins & (k - birth >= lifespan)
+            mask &= ~dying
+            birth[dying] = -1
+
         rgb = np.zeros((3, H, W), np.float32)
         alpha = np.zeros((H, W), np.float32)
         alpha[mask] = SUPPORT_ALPHA
+        alpha[mask & veins] = BACKBONE_ALPHA
         for ci, layer in enumerate(layers):
             if reveal_at[ci] is None:
                 continue
@@ -197,12 +255,13 @@ def rotate_stack(t, deg):
 def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
           log_every=100, snap_dir=None, rng_seed=0, growth="bfs",
-          rot_mode="aug90", rot_at=1000, rot_deg=20.0):
+          rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None):
     torch.manual_seed(sum(map(ord, text)) + 31)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}")
 
-    rgb_np, a_np, mask_np = grow_frames(text, K, glyph, rng_seed, growth=growth)
+    rgb_np, a_np, mask_np = grow_frames(text, K, glyph, rng_seed, growth=growth,
+                                        lifespan=lifespan)
     rgb_f = torch.from_numpy(rgb_np).to(device)      # [K,3,H,W]
     a_f = torch.from_numpy(a_np).to(device)          # [K,1,H,W]
     rgb_mask = torch.from_numpy(mask_np).to(device)  # [1,H,W]
@@ -235,7 +294,7 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
                    {"steps": steps, "K": K, "glyph": glyph, "batch": batch,
                     "lr": lr, "rng_seed": rng_seed, "pool_size": pool_size,
                     "growth": growth, "rot_mode": rot_mode,
-                    "rot_at": rot_at, "rot_deg": rot_deg},
+                    "rot_at": rot_at, "rot_deg": rot_deg, "lifespan": lifespan},
                    channel_n, hidden_n, "single", steps, device)
 
     t0 = time.time()
@@ -312,9 +371,10 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
 
 
 def preview_targets(text, out_dir, K=60, glyph=12, rng_seed=0, every=4,
-                    growth="bfs"):
+                    growth="bfs", lifespan=None):
     """Write the proposed target frames for LGTM before training."""
-    rgb, a, _ = grow_frames(text, K, glyph, rng_seed, growth=growth)
+    rgb, a, _ = grow_frames(text, K, glyph, rng_seed, growth=growth,
+                            lifespan=lifespan)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for k in range(0, K, every):
@@ -337,14 +397,19 @@ if __name__ == "__main__":
                         "late: rotate the target world by --rot-deg after --rot-at steps")
     p.add_argument("--rot-at", type=int, default=1000)
     p.add_argument("--rot-deg", type=float, default=20.0)
+    p.add_argument("--lifespan", type=int, default=None,
+                   help="Support cells die after this many frames unless on "
+                        "the letter-connecting backbone")
     p.add_argument("--preview", action="store_true",
                    help="Only generate proposed TARGET frames, no training")
     a = p.parse_args()
 
     if a.preview:
         preview_targets(a.text, a.snap_dir or "snaps_organic_reveal_preview",
-                        K=a.frames, rng_seed=a.rng_seed, growth=a.growth)
+                        K=a.frames, rng_seed=a.rng_seed, growth=a.growth,
+                        lifespan=a.lifespan)
     else:
         train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
               log_every=a.log_every, snap_dir=a.snap_dir, growth=a.growth,
-              rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg)
+              rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg,
+              lifespan=a.lifespan)

@@ -24,7 +24,17 @@ app.add_middleware(
 
 @app.get("/")
 def index():
-    return FileResponse("dashboard.html")
+    return FileResponse("dashboard.html", headers={"Cache-Control": "no-store"})
+
+
+@app.middleware("http")
+async def no_stale_assets(request, call_next):
+    """LAN dashboard: force revalidation of HTML/JS so edits show up on
+    reload without hard-refreshing (root files carry a fixed ?v=dev)."""
+    response = await call_next(request)
+    if request.url.path.endswith((".js", ".html")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 # ---------------------------------------------------------------------------
 # Cloud state: Vertex job statuses + training runs discovered in the GCS
