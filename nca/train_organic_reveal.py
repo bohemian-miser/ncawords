@@ -52,7 +52,7 @@ def render_chars(text, glyph=12):
 
 def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
                 bias_turns=1.5, growth="bfs", step_len=3, branch_p=0.25,
-                max_walkers=20):
+                max_walkers=20, max_dist=None):
     """Precompute the K target frames of the exploration process.
 
     growth='bfs': probabilistic frontier expansion (blob with ragged edges).
@@ -75,6 +75,30 @@ def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
     frames_rgb, frames_a = [], []
     neigh_off = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
+    # Exploration is confined to within max_dist of the letters (default one
+    # letter-height) so growth hugs the text and finds every character.
+    if max_dist is None:
+        letter_h = max(int(np.ptp(np.where(p.any(1))[0])) + 1 for p in char_pix)
+        max_dist = letter_h
+    all_letters = np.zeros((H, W), bool)
+    for p in char_pix:
+        all_letters |= p
+    dist = np.full((H, W), 1e9, np.float32)
+    dist[all_letters] = 0
+    frontier = all_letters.copy()
+    d = 0
+    while frontier.any():
+        d += 1
+        dil = np.zeros_like(frontier)
+        for dy, dx in neigh_off:
+            dil |= np.roll(np.roll(frontier, dy, 0), dx, 1)
+        newly = dil & (dist > d)
+        if not newly.any():
+            break
+        dist[newly] = d
+        frontier = newly
+    allowed = dist <= max_dist
+
     for k in range(K):
         if growth == "dfs":
             # Tendril walkers: persistent heading + jitter, occasional branch.
@@ -82,12 +106,13 @@ def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
             for (y, x, ang) in walkers:
                 for _ in range(step_len):
                     ang += rng.normal(0, 0.45)
-                    y += np.sin(ang)
-                    x += np.cos(ang)
-                    if not (0 <= y < H and 0 <= x < W):
-                        ang += np.pi + rng.normal(0, 0.5)
-                        y = min(max(y, 0), H - 1)
-                        x = min(max(x, 0), W - 1)
+                    ny = y + np.sin(ang)
+                    nx_ = x + np.cos(ang)
+                    if not (0 <= ny < H and 0 <= nx_ < W) \
+                            or not allowed[int(ny), int(nx_)]:
+                        ang += np.pi + rng.normal(0, 0.5)  # bounce off the band
+                        continue
+                    y, x = ny, nx_
                     mask[int(y), int(x)] = True
                 nxt.append((y, x, ang))
                 if rng.random() < branch_p and len(nxt) < max_walkers:
@@ -104,7 +129,7 @@ def grow_frames(text, K=60, glyph=12, rng_seed=0, join_p=0.4, bias_gain=0.35,
                 d = np.array([dy, dx]) / np.hypot(dy, dx)
                 p = np.clip(join_p + bias_gain * float(d @ bias), 0.05, 0.95)
                 grow |= cand & (rng.random((H, W)) < p)
-            mask |= grow
+            mask |= grow & allowed
 
         # Characters touched by the mask start fading in; fully revealed
         # characters join the mask so growth continues from their border.
