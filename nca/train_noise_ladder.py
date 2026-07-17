@@ -152,7 +152,9 @@ def train(text, schedule="ladder+jumps", stage_mode="fixed", stage_steps=100,
                 meta.log(step, loss.item(), stage_idx=stage_idx,
                          stage=f"{input_noise:.1f}->{target_noise:.1f}",
                          steps_in_stage=steps_in_stage)
-                export_run_weights(model, snap_dir, text, glyph)
+                export_run_weights(model, snap_dir, text, glyph,
+                                   grid_w=tgt.shape[2], grid_h=tgt.shape[1],
+                                   seed_type="noise")
         step += 1
 
     final = f"{loss.item():.5f}" if loss is not None else "n/a (already complete)"

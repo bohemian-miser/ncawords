@@ -45,6 +45,9 @@ window.loadInteractiveModel = async function() {
         }
         
         const weights = await res.json();
+        // Denoising models declare seedType 'noise': reset fills the grid
+        // with noise instead of placing a single seed.
+        if (weights.seedType === 'noise') isNoise = true;
         
         // Clean up old webgl context if present
         if(unit && unit.ca && unit.ca.gl) {

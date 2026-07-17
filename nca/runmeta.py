@@ -57,8 +57,15 @@ class RunMeta:
             self.path.write_text(json.dumps(self.d))
 
 
-def export_run_weights(model, snap_dir, text, glyph=12, grid_w=100, grid_h=40):
-    """Write weights.json (viewer format) next to the run's snapshots."""
+def export_run_weights(model, snap_dir, text, glyph=12, grid_w=100, grid_h=40,
+                       seed_type=None):
+    """Write weights.json (viewer format) next to the run's snapshots.
+
+    Growth models are translation-invariant, so a roomy default canvas is
+    fine; denoisers place content relative to the canvas bounds, so pass
+    the exact training grid dims for those, plus seed_type='noise' so the
+    playground starts them from a noise-filled grid.
+    """
     if not snap_dir:
         return
     cpu_model = NCA(model.channel_n, hidden_n=model.fc0.out_channels)
@@ -68,4 +75,6 @@ def export_run_weights(model, snap_dir, text, glyph=12, grid_w=100, grid_h=40):
     d = json.loads(out.read_text())
     d.update({"kind": "word", "text": text, "grid_w": grid_w, "grid_h": grid_h,
               "grid": None})
+    if seed_type:
+        d["seedType"] = seed_type
     out.write_text(json.dumps(d))
