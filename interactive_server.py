@@ -43,6 +43,8 @@ async def no_stale_assets(request, call_next):
 # ---------------------------------------------------------------------------
 PROJECT_ID = "recipe-lanes-staging"
 VERTEX_LOCATION = "us-central1"
+# Every region with spot-T4 training quota; jobs are spread across them.
+VERTEX_REGIONS = ["us-central1", "us-east1", "us-west1", "europe-west2", "europe-west4"]
 BUCKET_NAME = "recipe-lanes-nca-jobs"
 PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
 
@@ -75,10 +77,14 @@ def _fetch_cloud_state_now():
     jobs = {}
     try:
         from google.cloud import aiplatform
-        aiplatform.init(project=PROJECT_ID, location=VERTEX_LOCATION)
-        for j in aiplatform.CustomJob.list():
-            name = j.display_name.removesuffix("-custom-job")
-            jobs[name] = j.state.name.replace("JOB_STATE_", "")
+        for region in VERTEX_REGIONS:
+            try:
+                for j in aiplatform.CustomJob.list(project=PROJECT_ID, location=region):
+                    name = j.display_name.removesuffix("-custom-job")
+                    jobs[name] = {"state": j.state.name.replace("JOB_STATE_", ""),
+                                  "region": region}
+            except Exception as e:
+                print(f"Warning: could not list Vertex jobs in {region}: {e}")
     except Exception as e:
         print(f"Warning: could not list Vertex jobs: {e}")
 
@@ -125,12 +131,14 @@ def get_methods():
         run_id = f"cloud_{run}"
         if run_id in local_ids:
             continue
-        state = cloud["jobs"].get(run, "")
+        job = cloud["jobs"].get(run, {})
+        state, region = job.get("state", ""), job.get("region", "")
         entry = {
             "id": run_id,
             "title": f"☁ {run}",
             "dir": f"{PUBLIC_BASE}{run}/",
-            "desc": f"Vertex AI run ({state or 'no active job'})",
+            "desc": f"Vertex AI run ({state or 'no active job'}"
+                    + (f", {region}" if region else "") + ")",
             "seedType": "cloud",
             "cloud": True,
             "vertex_state": state,
@@ -138,6 +146,23 @@ def get_methods():
         if run in cloud["weights"]:
             entry["weights_url"] = f"{PUBLIC_BASE}{run}/weights.json"
         methods.append(entry)
+
+    # Jobs that are queued/running but haven't written a snapshot yet still
+    # get a card, so the whole fleet is discoverable the moment it exists.
+    for name, job in sorted(cloud["jobs"].items()):
+        if name in cloud["runs"] or f"cloud_{name}" in local_ids:
+            continue
+        if job.get("state") not in ("PENDING", "RUNNING", "QUEUED"):
+            continue
+        methods.append({
+            "id": f"cloud_{name}",
+            "title": f"☁ {name}",
+            "dir": f"{PUBLIC_BASE}{name}/",
+            "desc": f"{job['state']} in {job['region']} — no snapshots yet",
+            "seedType": "cloud",
+            "cloud": True,
+            "vertex_state": job["state"],
+        })
     return methods
 
 @app.get("/api/notes")
