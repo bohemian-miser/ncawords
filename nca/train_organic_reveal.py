@@ -320,10 +320,13 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
         x = model(x, steps=n_ca)
 
         # Letter pixels are ~4% of the canvas; without upweighting the model
-        # learns blanket support and ignores the reveal entirely.
-        pix_w = 1.0 + letter_w * masks
+        # learns blanket support and ignores the reveal entirely. The weight
+        # ramps in over the first 2000 steps: full pressure from step 0
+        # collapsed training into the absorbing all-dead state (lw8 run).
+        lw_eff = 1.0 + (letter_w - 1.0) * min(1.0, step / 2000.0)
+        pix_w = 1.0 + lw_eff * masks
         loss_a = ((x[:, 3:4] - tgt_a) ** 2 * pix_w).mean()
-        loss_rgb = letter_w * ((x[:, :3] - tgt_rgb) ** 2 * masks.unsqueeze(1)).sum() \
+        loss_rgb = lw_eff * ((x[:, :3] - tgt_rgb) ** 2 * masks.unsqueeze(1)).sum() \
             / (masks.sum() * 3 * batch + 1e-8)
         loss = loss_a + loss_rgb
 
