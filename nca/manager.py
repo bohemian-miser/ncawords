@@ -1,4 +1,5 @@
 import sys
+import json
 from pathlib import Path
 
 # Add project root to sys.path to allow nca imports
@@ -24,34 +25,44 @@ try:
 except ImportError:
     pass
 
+try:
+    import nca.legacy_experiments
+except ImportError:
+    pass
+
 def update_methods(output_file="methods.json"):
     """
     Orchestration hook: Generates the methods.json dynamically 
     based on all properly imported Experiment subclasses.
     """
-    import json
-    
-    # Legacy methods that haven't been migrated to OOP yet
-    legacy_methods = [
-        { "id": "m1", "title": "Method 1: 3-Line BB", "dir": "snaps_web_method1/", "desc": "", "seedType": "single" },
-        { "id": "m1n", "title": "Method 1: 3-Line BB (Noise)", "dir": "snaps_web_method1_noise/", "desc": "", "seedType": "noise" },
-        { "id": "m2", "title": "Method 2: Organic", "dir": "snaps_web_method2/", "desc": "", "seedType": "single" },
-        { "id": "m2n", "title": "Method 2: Organic (Noise)", "dir": "snaps_web_method2_noise/", "desc": "", "seedType": "noise" },
-        { "id": "m4", "title": "Method 4: Proximity", "dir": "snaps_web_method4/", "desc": "", "seedType": "single" },
-        { "id": "m4n", "title": "Method 4: Proximity (Noise)", "dir": "snaps_web_method4_noise/", "desc": "", "seedType": "noise" },
-        { "id": "m5", "title": "Method 5: Gravity", "dir": "snaps_web_method5/", "desc": "", "seedType": "single" },
-        { "id": "m5n", "title": "Method 5: Gravity (Noise)", "dir": "snaps_web_method5_noise/", "desc": "", "seedType": "noise" },
-        { "id": "m9", "title": "9-Line Matrix", "dir": "snaps_9_line/", "desc": "WINNER", "seedType": "single" },
-        { "id": "m9n", "title": "9-Line Matrix (Noise)", "dir": "snaps_9_line_noise/", "desc": "WINNER", "seedType": "noise" },
-        { "id": "evap", "title": "Evaporating Scaffold", "dir": "snaps_web_evaporate/", "desc": "", "seedType": "single" },
-        { "id": "evapn", "title": "Evap Scaffold (Noise)", "dir": "snaps_web_evaporate_noise/", "desc": "", "seedType": "noise" },
-        { "id": "hid", "title": "Hidden Channel Scaffold", "dir": "snaps_web_hidden/", "desc": "", "seedType": "single" },
-        { "id": "hidn", "title": "Hidden Channel (Noise)", "dir": "snaps_web_hidden_noise/", "desc": "", "seedType": "noise" }
-    ]
     
     # base subclasses
-    methods = legacy_methods + [subclass().get_metadata() for subclass in Experiment.__subclasses__()]
+    # Check if LegacyExperiment subclasses need to be expanded individually
+    if 'LegacyExperiment' in [subclass.__name__ for subclass in Experiment.__subclasses__()]:
+        # Filter out LegacyExperiment itself from methods it hasn't properly implemented get_metadata vs direct use?
+        # Actually, LegacyExperiment.__subclasses__() will contain m1, m1n...
+        # Wait, Experiment.__subclasses__() might only contain LegacyExperiment, GuidedExperiment, etc.
+        # We need to deeply fetch all subclasses.
+        pass
+        
+    def get_all_subclasses(cls):
+        all_subclasses = []
+        for subclass in cls.__subclasses__():
+            all_subclasses.append(subclass)
+            all_subclasses.extend(get_all_subclasses(subclass))
+        return all_subclasses
+        
+    all_experiments = get_all_subclasses(Experiment)
     
+    methods = []
+    for cls in all_experiments:
+        if cls.__name__ == 'LegacyExperiment':
+            continue
+        try:
+            methods.append(cls().get_metadata())
+        except Exception:
+            pass # skip classes that can't be instantiated easily, like abstract ones if they exist
+            
     # Generate the 12 parameterized versions of Dynamic Organic
     try:
         from nca.train_dynamic_organic import DynamicOrganicExperiment

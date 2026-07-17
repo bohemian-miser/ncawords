@@ -27,17 +27,15 @@ def export_all():
         # Remove snaps_ and snaps_web_ to get base name
         name = model_dir.replace('snaps_web_', '').replace('snaps_', '').replace('/', '')
         
-        # Infer properties
-        if "method1" in model_dir or "method4" in model_dir or "method5" in model_dir or m["id"] == "cloud" or m["id"] == "guided":
-            c_n, h_n = 32, 128
-        else:
-            c_n, h_n = 16, 80
+        # Read directly from configuration instead of inferring from path
+        c_n = m.get("c_n", 16)
+        h_n = m.get("h_n", 80)
 
         if not os.path.exists(pth_val):
             print(f"Skipping {name}: {pth_val} not found")
             continue
             
-        print(f"Loading {name}...")
+        print(f"Loading {name} (c_n={c_n}, h_n={h_n})...")
         device = "cpu"
         model = NCA(c_n, hidden_n=h_n).to(device)
         ckpt = torch.load(pth_val, map_location=device, weights_only=True)
@@ -48,11 +46,6 @@ def export_all():
         
         out_path = docs_weights / f"word_{name}.json"
         
-        # Grid sizes varied, but generally they used word_geometry(4 letters)
-        # In 9_line it was 68x20. In method4 it was 68x20 too or something similar
-        # Since these are single-seed, the exact edge bounds matter less as long as it's big enough.
-        # Let's give them 120x40 to be safe (plenty of room to grow), 
-        # or we can look up their exact size if it breaks. nca.js handles torii / borders implicitly.
         export_weights(model, name, 0, 12, out_path)
         
         d = json.loads(out_path.read_text())

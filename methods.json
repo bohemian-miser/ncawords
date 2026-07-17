@@ -4,202 +4,125 @@
         "title": "Method 1: 3-Line BB",
         "dir": "snaps_web_method1/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m1n",
         "title": "Method 1: 3-Line BB (Noise)",
         "dir": "snaps_web_method1_noise/",
         "desc": "",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m2",
         "title": "Method 2: Organic",
         "dir": "snaps_web_method2/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "m2n",
         "title": "Method 2: Organic (Noise)",
         "dir": "snaps_web_method2_noise/",
         "desc": "",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "m4",
         "title": "Method 4: Proximity",
         "dir": "snaps_web_method4/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m4n",
         "title": "Method 4: Proximity (Noise)",
         "dir": "snaps_web_method4_noise/",
         "desc": "",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m5",
         "title": "Method 5: Gravity",
         "dir": "snaps_web_method5/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m5n",
         "title": "Method 5: Gravity (Noise)",
         "dir": "snaps_web_method5_noise/",
         "desc": "",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
     },
     {
         "id": "m9",
         "title": "9-Line Matrix",
         "dir": "snaps_9_line/",
         "desc": "WINNER",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "m9n",
         "title": "9-Line Matrix (Noise)",
         "dir": "snaps_9_line_noise/",
         "desc": "WINNER",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "evap",
         "title": "Evaporating Scaffold",
         "dir": "snaps_web_evaporate/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "evapn",
         "title": "Evap Scaffold (Noise)",
         "dir": "snaps_web_evaporate_noise/",
         "desc": "",
-        "seedType": "noise"
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "hid",
         "title": "Hidden Channel Scaffold",
         "dir": "snaps_web_hidden/",
         "desc": "",
-        "seedType": "single"
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
     },
     {
         "id": "hidn",
         "title": "Hidden Channel (Noise)",
         "dir": "snaps_web_hidden_noise/",
         "desc": "",
-        "seedType": "noise"
-    },
-    {
-        "id": "guided",
-        "title": "Guided Target Changes",
-        "dir": "snaps_guided/",
-        "desc": "Loads a pre-generated sequence of external constraints / targets.",
-        "seedType": "single"
-    },
-    {
-        "id": "cloud",
-        "title": "Cloud Target (Noise & Transforms)",
-        "dir": "snaps_cloud/",
-        "desc": "Uses randomized cloud-like affine transformed seeds as constraints.",
-        "seedType": "noise"
-    },
-    {
-        "id": "dynamic_organic",
-        "title": "Dynamic Organic Branches",
-        "dir": "snaps_dynamic_organic/",
-        "desc": "Dynamically generates organic branches/tendrils as a target.",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1_vol0_7",
-        "title": "Dyn Organic N=1 Vol 0.7",
-        "dir": "snaps_dyn_clear_n1_vol0_7/",
-        "desc": "Param grid config N=1, vol=0.7",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1_vol0_4",
-        "title": "Dyn Organic N=1 Vol 0.4",
-        "dir": "snaps_dyn_clear_n1_vol0_4/",
-        "desc": "Param grid config N=1, vol=0.4",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1_vol0_1",
-        "title": "Dyn Organic N=1 Vol 0.1",
-        "dir": "snaps_dyn_clear_n1_vol0_1/",
-        "desc": "Param grid config N=1, vol=0.1",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n100_vol0_7",
-        "title": "Dyn Organic N=100 Vol 0.7",
-        "dir": "snaps_dyn_clear_n100_vol0_7/",
-        "desc": "Param grid config N=100, vol=0.7",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n100_vol0_4",
-        "title": "Dyn Organic N=100 Vol 0.4",
-        "dir": "snaps_dyn_clear_n100_vol0_4/",
-        "desc": "Param grid config N=100, vol=0.4",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n100_vol0_1",
-        "title": "Dyn Organic N=100 Vol 0.1",
-        "dir": "snaps_dyn_clear_n100_vol0_1/",
-        "desc": "Param grid config N=100, vol=0.1",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n500_vol0_7",
-        "title": "Dyn Organic N=500 Vol 0.7",
-        "dir": "snaps_dyn_clear_n500_vol0_7/",
-        "desc": "Param grid config N=500, vol=0.7",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n500_vol0_4",
-        "title": "Dyn Organic N=500 Vol 0.4",
-        "dir": "snaps_dyn_clear_n500_vol0_4/",
-        "desc": "Param grid config N=500, vol=0.4",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n500_vol0_1",
-        "title": "Dyn Organic N=500 Vol 0.1",
-        "dir": "snaps_dyn_clear_n500_vol0_1/",
-        "desc": "Param grid config N=500, vol=0.1",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1000_vol0_7",
-        "title": "Dyn Organic N=1000 Vol 0.7",
-        "dir": "snaps_dyn_clear_n1000_vol0_7/",
-        "desc": "Param grid config N=1000, vol=0.7",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1000_vol0_4",
-        "title": "Dyn Organic N=1000 Vol 0.4",
-        "dir": "snaps_dyn_clear_n1000_vol0_4/",
-        "desc": "Param grid config N=1000, vol=0.4",
-        "seedType": "single"
-    },
-    {
-        "id": "dyn_clear_n1000_vol0_1",
-        "title": "Dyn Organic N=1000 Vol 0.1",
-        "dir": "snaps_dyn_clear_n1000_vol0_1/",
-        "desc": "Param grid config N=1000, vol=0.1",
-        "seedType": "single"
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
     }
 ]

@@ -13,6 +13,8 @@ class Experiment:
     TITLE = "Base Experiment"
     DESCRIPTION = "Abstract base class."
     SEED_TYPE = "single"  # 'single' or 'noise'
+    C_N = 16
+    H_N = 80
     
     def __init__(self, base_dir="."):
         self.output_dir = Path(base_dir) / f"snaps_{self.ID}"
@@ -25,7 +27,9 @@ class Experiment:
             "title": self.TITLE,
             "dir": f"snaps_{self.ID}/",
             "desc": self.DESCRIPTION,
-            "seedType": self.SEED_TYPE
+            "seedType": self.SEED_TYPE,
+            "c_n": self.C_N,
+            "h_n": self.H_N
         }
         
     def generate_proposed_targets(self, total_steps: int = 4000):
@@ -50,8 +54,6 @@ class Experiment:
         Discovers all subclasses and dumps their metadata into methods.json
         so the API/frontend dynamically picks them up on load.
         """
-        # For a full implementation, you would dynamically import all modules in /nca 
-        # to ensure their subclasses are loaded in memory here.
         methods = [subclass().get_metadata() for subclass in cls.__subclasses__()]
         with open(output_file, 'w') as f:
             json.dump(methods, f, indent=4)
