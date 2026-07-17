@@ -45,7 +45,11 @@ def try_resume(snap_dir, model, opt, sched=None, pool=None, device="cpu"):
         if sched is not None and state.get("sched") is not None:
             sched.load_state_dict(state["sched"])
         if pool is not None and state.get("pool") is not None:
-            pool.pool = state["pool"]
+            # Restore to wherever this script keeps its pool (CPU for the
+            # scaffold scripts, GPU for organic) — map_location=device would
+            # otherwise silently move a CPU pool to CUDA and crash the next
+            # pool.commit after a preemption resume.
+            pool.pool = state["pool"].to(pool.pool.device)
         start = state["step"] + 1
         print(f"Resumed from checkpoint at step {state['step']} ({path})", flush=True)
         return start, state.get("extra", {})
