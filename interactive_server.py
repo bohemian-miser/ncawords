@@ -25,6 +25,85 @@ app.add_middleware(
 def index():
     return FileResponse("dashboard.html")
 
+# ---------------------------------------------------------------------------
+# Cloud state: Vertex job statuses + training runs discovered in the GCS
+# bucket. The bucket is public-read, so the browser loads images directly
+# from PUBLIC_BASE and the server only supplies listings/statuses.
+# ---------------------------------------------------------------------------
+PROJECT_ID = "recipe-lanes-staging"
+VERTEX_LOCATION = "us-central1"
+BUCKET_NAME = "recipe-lanes-nca-jobs"
+PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
+
+_cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}}
+
+
+def fetch_cloud_state(ttl=20):
+    now = time.time()
+    if now - _cloud_cache["t"] < ttl:
+        return _cloud_cache
+
+    jobs = {}
+    try:
+        from google.cloud import aiplatform
+        aiplatform.init(project=PROJECT_ID, location=VERTEX_LOCATION)
+        for j in aiplatform.CustomJob.list():
+            name = j.display_name.removesuffix("-custom-job")
+            jobs[name] = j.state.name.replace("JOB_STATE_", "")
+    except Exception as e:
+        print(f"Warning: could not list Vertex jobs: {e}")
+
+    runs = {}
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=PROJECT_ID)
+        for blob in client.list_blobs(BUCKET_NAME):
+            if "/" not in blob.name:
+                continue
+            run, fname = blob.name.split("/", 1)
+            if fname.startswith("COMP_"):
+                try:
+                    step = int(fname[5:10])
+                except ValueError:
+                    continue
+                runs[run] = max(runs.get(run, -1), step)
+    except Exception as e:
+        print(f"Warning: could not list bucket runs: {e}")
+
+    _cloud_cache.update({"t": now, "runs": runs, "jobs": jobs})
+    return _cloud_cache
+
+
+@app.get("/api/jobs")
+def get_jobs():
+    return fetch_cloud_state()["jobs"]
+
+
+@app.get("/api/methods")
+def get_methods():
+    methods = []
+    if os.path.exists("methods.json"):
+        with open("methods.json") as f:
+            methods = json.load(f)
+
+    cloud = fetch_cloud_state()
+    local_ids = {m["id"] for m in methods}
+    for run, max_step in sorted(cloud["runs"].items()):
+        run_id = f"cloud_{run}"
+        if run_id in local_ids:
+            continue
+        state = cloud["jobs"].get(run, "")
+        methods.append({
+            "id": run_id,
+            "title": f"☁ {run}",
+            "dir": f"{PUBLIC_BASE}{run}/",
+            "desc": f"Vertex AI run ({state or 'no active job'})",
+            "seedType": "cloud",
+            "cloud": True,
+            "vertex_state": state,
+        })
+    return methods
+
 @app.get("/api/notes")
 def get_notes():
     if not os.path.exists("notes.json"):
@@ -66,6 +145,12 @@ def fetch_status_sync():
                 except ValueError: pass
         max_step = max(comps) if comps else -1
         status[d + '/'] = max_step
+
+    # Cloud runs keyed by their public URL prefix, matching the 'dir' the
+    # /api/methods endpoint hands to the frontend.
+    cloud = fetch_cloud_state()
+    for run, max_step in cloud["runs"].items():
+        status[f"{PUBLIC_BASE}{run}/"] = max_step
     return status
 
 async def status_generator():

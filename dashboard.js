@@ -6,9 +6,10 @@ let serverState = {};
 let activeModalDir = null;
 let activeModalMaxStepRendered = -100;
 
-// Fetch methods via API
-fetch('methods.json?t=' + Date.now())
-    .then(res => res.json())
+// Fetch methods via API (server merges in cloud runs); fall back to the
+// static methods.json when running without a backend (gh-pages).
+fetch('/api/methods?t=' + Date.now())
+    .then(res => res.ok ? res.json() : fetch('methods.json?t=' + Date.now()).then(r => r.json()))
     .then(data => {
         methods = data;
         
@@ -133,6 +134,11 @@ function updateOverviewUI() {
                 ct.statusObj.style.color = '#4db8ff';
                 ct.statusObj.innerText = '(Ready for training)';
                 if (ct.imgObj) ct.imgObj.style.display = 'none';
+            } else if (ct.vertexState) {
+                const done = ct.vertexState === 'SUCCEEDED';
+                ct.cardObj.style.borderColor = done ? '#00ff00' : '#ffaa00';
+                ct.statusObj.style.color = done ? '#00ff00' : '#ffaa00';
+                ct.statusObj.innerText = `${ct.lastStatusText || ''} (Vertex: ${ct.vertexState})`;
             } else if (currentHighest >= 15900) {
                 ct.cardObj.style.borderColor = '#00ff00';
                 ct.statusObj.style.color = '#00ff00';
