@@ -96,6 +96,13 @@ window.resetInteractive = function() {
     }
 };
 
+window.noiseInteractive = function() {
+    if(unit && unit.ca) {
+        unit.ca.reset(true);
+        drawCA();
+    }
+};
+
 window.runInteractiveLoop = function() {
     if(!unit || !unit.ca) return;
     const steps = parseInt(document.getElementById("speed-slider").value);
