@@ -163,7 +163,7 @@ function initializeDropdown() {
     const selectBox = document.getElementById("interactive-model-select");
     selectBox.innerHTML = '';
 
-    fetch('docs/weights/index.json?t=' + Date.now())
+    fetch('weights/index.json?t=' + Date.now())
         .then(r => r.json())
         .then(idx => {
             methods.forEach(m => {
