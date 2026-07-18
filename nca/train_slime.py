@@ -126,11 +126,26 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
     print(f"Training on device: {device}")
 
     print("Running Physarum simulation to generate training frames...")
-    food = letter_food(food_text) if food_text else None
-    frames_np = physarum_frames(K=K, rng_seed=rng_seed, food=food,
-                                food_w=food_w, **(sim_kwargs or {}))
-    frames = torch.from_numpy(frames_np).to(device)  # [K, H, W]
-    print(f"Simulated {K} frames, mean trail {frames_np.mean():.3f}")
+    # Multiple comma-separated food layouts force the model to actually
+    # read the food channel (a single layout can be memorized and ignored).
+    texts = [t for t in (food_text.split(",") if food_text else []) if t]
+    foods, frame_sets = [], []
+    if texts:
+        for i, t in enumerate(texts):
+            fd = letter_food(t)
+            foods.append(fd)
+            frame_sets.append(physarum_frames(K=K, rng_seed=rng_seed + i,
+                                              food=fd, food_w=food_w,
+                                              **(sim_kwargs or {})))
+    else:
+        foods = [None]
+        frame_sets = [physarum_frames(K=K, rng_seed=rng_seed,
+                                      **(sim_kwargs or {}))]
+    food = foods[0]
+    frames_np = frame_sets[0]
+    frames_t = [torch.from_numpy(f).to(device) for f in frame_sets]
+    frames = frames_t[0]
+    print(f"Simulated {len(frame_sets)}x{K} frames")
 
     if snap_dir:
         Path(snap_dir).mkdir(parents=True, exist_ok=True)
@@ -141,10 +156,12 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
     sched = torch.optim.lr_scheduler.MultiStepLR(
         opt, milestones=[int(steps * 0.8)], gamma=0.1)
 
-    pool = torch.stack([make_state_from_frame(frames_np[0], channel_n, device,
-                                              food=food)
-                        for _ in range(pool_size)])
+    pool = torch.stack([make_state_from_frame(frame_sets[i % len(frame_sets)][0],
+                                              channel_n, device,
+                                              food=foods[i % len(foods)])
+                        for i in range(pool_size)])
     pool_k = torch.zeros(pool_size, dtype=torch.long)
+    pool_f = torch.arange(pool_size) % len(frame_sets)
 
     start_step, _ = try_resume(snap_dir, model, opt, sched, device=device)
 
@@ -160,7 +177,9 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
         x = pool[idx].clone()
         ks = pool_k[idx]
 
-        tgt_a = torch.stack([frames[min(int(k) + 1, K - 1)] for k in ks]).unsqueeze(1)
+        fs = pool_f[idx]
+        tgt_a = torch.stack([frames_t[int(f)][min(int(k) + 1, K - 1)]
+                             for k, f in zip(ks, fs)]).unsqueeze(1)
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
@@ -179,8 +198,9 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
             pool[idx] = x.detach()
             for j, i in enumerate(idx):
                 if ks[j] + 1 >= K - 1:
-                    pool[i] = make_state_from_frame(frames_np[0], channel_n, device,
-                                                    food=food)
+                    fi = int(pool_f[i])
+                    pool[i] = make_state_from_frame(frame_sets[fi][0], channel_n,
+                                                    device, food=foods[fi])
                     pool_k[i] = 0
                 else:
                     pool_k[i] = ks[j] + 1
