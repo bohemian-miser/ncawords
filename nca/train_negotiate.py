@@ -23,7 +23,7 @@ from nca.model import NCA, to_rgba, to_rgb
 from nca.train import FONT_PATH, char_color
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
-from nca.rollout import adaptive_rollout
+from nca.rollout import adaptive_rollout, fester
 
 CANVAS = 64
 
@@ -151,7 +151,14 @@ def make_self_batch(model, word, ys, xs, rng, batch, channel_n, delta, device):
         a = z[i, 3].clamp(0, 1).cpu().numpy()
         events = persistence_0d(a, min_persistence=0.05)
         if events:
-            b_, d_, (py, px) = max(events, key=lambda e: e[0] - e[1])
+            # prefer peaks that fit without clipping — clipped placement
+            # taught the model edge-seeking (candidates migrated to the
+            # canvas border and flared out there)
+            fit = [e for e in events
+                   if h // 2 <= e[2][0] <= CANVAS - h + h // 2
+                   and w // 2 <= e[2][1] <= CANVAS - w + w // 2]
+            pool_ev = fit if fit else events
+            b_, d_, (py, px) = max(pool_ev, key=lambda e: e[0] - e[1])
             y0 = int(np.clip(py - h // 2, 0, CANVAS - h))
             x0 = int(np.clip(px - w // 2, 0, CANVAS - w))
             p = partial_np_local(word, ys, xs, 0.3 + delta)
@@ -169,7 +176,7 @@ def partial_np_local(word, ys, xs, frac):
 
 def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
           batch=16, lr=2e-3, ca_min=12, ca_max=24, max_cands=3, delta=0.15,
-          nucleate_p=0.0, self_p=0.0, adaptive=False,
+          nucleate_p=0.0, self_p=0.0, adaptive=False, fester_p=0.0,
           log_every=100, snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 5)
     rng = np.random.default_rng(rng_seed)
@@ -199,7 +206,8 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
                     "max_cands": max_cands, "delta": delta,
                     "nucleate_p": nucleate_p, "self_p": self_p,
-                    "rng_seed": rng_seed, "adaptive": adaptive},
+                    "rng_seed": rng_seed, "adaptive": adaptive,
+                    "fester_p": fester_p},
                    channel_n, hidden_n, "negotiate", steps, device,
                    tags=["negotiate"] + (["adaptive"] if adaptive else []))
 
@@ -218,6 +226,8 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
             tgt = torch.from_numpy(np.stack(tgts)).to(device)
         x_start = x[:1].detach().clone()
 
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x, min_steps=100, max_steps=400)
         if adaptive:
             x, _used = adaptive_rollout(model, x, tgt, chunk=6, max_chunks=8)
         else:
@@ -285,6 +295,7 @@ if __name__ == "__main__":
     p.add_argument("--self-p", type=float, default=0.0,
                    help="Fraction of self-refereed batches (persistence-picked winner)")
     p.add_argument("--adaptive", action="store_true")
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
@@ -297,4 +308,5 @@ if __name__ == "__main__":
     else:
         train(a.text, steps=a.steps, max_cands=a.max_cands, delta=a.delta,
               nucleate_p=a.nucleate_p, self_p=a.self_p, adaptive=a.adaptive,
-              rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
+              fester_p=a.fester_p, rng_seed=a.rng_seed,
+              log_every=a.log_every, snap_dir=a.snap_dir)
