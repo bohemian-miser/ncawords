@@ -23,6 +23,7 @@ from nca.model import NCA, to_rgba, to_rgb
 from nca.train import FONT_PATH, char_color
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import adaptive_rollout
 
 CANVAS = 64
 
@@ -168,7 +169,8 @@ def partial_np_local(word, ys, xs, frac):
 
 def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
           batch=16, lr=2e-3, ca_min=12, ca_max=24, max_cands=3, delta=0.15,
-          nucleate_p=0.0, self_p=0.0, log_every=100, snap_dir=None, rng_seed=0):
+          nucleate_p=0.0, self_p=0.0, adaptive=False,
+          log_every=100, snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 5)
     rng = np.random.default_rng(rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -197,8 +199,9 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
                     "max_cands": max_cands, "delta": delta,
                     "nucleate_p": nucleate_p, "self_p": self_p,
-                    "rng_seed": rng_seed},
-                   channel_n, hidden_n, "negotiate", steps, device)
+                    "rng_seed": rng_seed, "adaptive": adaptive},
+                   channel_n, hidden_n, "negotiate", steps, device,
+                   tags=["negotiate"] + (["adaptive"] if adaptive else []))
 
     t0 = time.time()
     for step in range(start_step, steps):
@@ -215,8 +218,11 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
             tgt = torch.from_numpy(np.stack(tgts)).to(device)
         x_start = x[:1].detach().clone()
 
-        n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
-        x = model(x, steps=n_ca)
+        if adaptive:
+            x, _used = adaptive_rollout(model, x, tgt, chunk=6, max_chunks=8)
+        else:
+            n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
+            x = model(x, steps=n_ca)
         loss = F.mse_loss(to_rgba(x), tgt)
 
         opt.zero_grad()
@@ -278,6 +284,7 @@ if __name__ == "__main__":
                    help="Fraction of batches teaching noise -> proto-seeds")
     p.add_argument("--self-p", type=float, default=0.0,
                    help="Fraction of self-refereed batches (persistence-picked winner)")
+    p.add_argument("--adaptive", action="store_true")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
@@ -289,5 +296,5 @@ if __name__ == "__main__":
                        max_cands=a.max_cands, delta=a.delta, rng_seed=a.rng_seed)
     else:
         train(a.text, steps=a.steps, max_cands=a.max_cands, delta=a.delta,
-              nucleate_p=a.nucleate_p, self_p=a.self_p, rng_seed=a.rng_seed,
-              log_every=a.log_every, snap_dir=a.snap_dir)
+              nucleate_p=a.nucleate_p, self_p=a.self_p, adaptive=a.adaptive,
+              rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)

@@ -26,6 +26,7 @@ from nca.model import NCA, to_rgba
 from nca.train import FONT_PATH, char_color
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import adaptive_rollout
 
 PITCH, MARGIN, GRID_H = 14, 6, 20
 
@@ -111,8 +112,8 @@ def partial_np(tgt, ys, xs, frac):
 
 def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
           batch=16, pool_size=256, lr=2e-3, ca_min=48, ca_max=72,
-          gate=0.012, replay_p=0.0, log_every=100, ckpt_every=500,
-          snap_dir=None, rng_seed=0):
+          gate=0.012, replay_p=0.0, adaptive=False,
+          log_every=100, ckpt_every=500, snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 3)
     rng = np.random.default_rng(rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -148,8 +149,10 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
 
     meta = RunMeta(snap_dir, text, "nca.train_staged",
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
-                    "gate": gate, "replay_p": replay_p, "rng_seed": rng_seed},
-                   channel_n, hidden_n, "staged", steps, device)
+                    "gate": gate, "replay_p": replay_p, "rng_seed": rng_seed,
+                    "adaptive": adaptive},
+                   channel_n, hidden_n, "staged", steps, device,
+                   tags=["staged"] + (["adaptive"] if adaptive else []))
 
     recent = []
     t0 = time.time()
@@ -210,8 +213,11 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
             idx = None
 
         x_start = x[-1:].detach().clone()
-        n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
-        x = model(x, steps=n_ca)
+        if adaptive:
+            x, _used = adaptive_rollout(model, x, tgt_b, chunk=10, max_chunks=8)
+        else:
+            n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
+            x = model(x, steps=n_ca)
         loss = F.mse_loss(to_rgba(x), tgt_b)
 
         opt.zero_grad()
@@ -269,9 +275,11 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=14000)
     p.add_argument("--gate", type=float, default=0.012)
     p.add_argument("--replay-p", type=float, default=0.0)
+    p.add_argument("--adaptive", action="store_true")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(a.text, steps=a.steps, gate=a.gate, replay_p=a.replay_p,
-          rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
+          adaptive=a.adaptive, rng_seed=a.rng_seed,
+          log_every=a.log_every, snap_dir=a.snap_dir)

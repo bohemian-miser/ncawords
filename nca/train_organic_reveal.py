@@ -25,6 +25,7 @@ from nca.model import NCA, to_rgb
 from nca.train import FONT_PATH, char_color
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import adaptive_rollout
 
 CANVAS = 72          # square so 90-degree rotations are exact
 SUPPORT_ALPHA = 0.6  # target presence level for support-only cells
@@ -256,7 +257,7 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
           log_every=100, snap_dir=None, rng_seed=0, growth="bfs",
           rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None,
-          letter_w=8.0):
+          letter_w=8.0, adaptive=False):
     torch.manual_seed(sum(map(ord, text)) + 31)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}")
@@ -296,8 +297,9 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
                     "lr": lr, "rng_seed": rng_seed, "pool_size": pool_size,
                     "growth": growth, "rot_mode": rot_mode,
                     "rot_at": rot_at, "rot_deg": rot_deg, "lifespan": lifespan,
-                    "letter_w": letter_w},
-                   channel_n, hidden_n, "single", steps, device)
+                    "letter_w": letter_w, "adaptive": adaptive},
+                   channel_n, hidden_n, "single", steps, device,
+                   tags=["organic"] + (["adaptive"] if adaptive else []))
 
     t0 = time.time()
     for step in range(start_step, steps):
@@ -316,8 +318,12 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
                              for k, r in zip(ks, rots)])
         masks = torch.stack([torch.rot90(src_mask, r.item(), (1, 2)) for r in rots])
 
-        n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
-        x = model(x, steps=n_ca)
+        if adaptive:
+            tgt_full = torch.cat([tgt_rgb, tgt_a], dim=1)
+            x, _used = adaptive_rollout(model, x, tgt_full, chunk=6, max_chunks=8)
+        else:
+            n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
+            x = model(x, steps=n_ca)
 
         # Letter pixels are ~4% of the canvas; without upweighting the model
         # learns blanket support and ignores the reveal entirely. The weight
@@ -414,6 +420,7 @@ if __name__ == "__main__":
                         "the letter-connecting backbone")
     p.add_argument("--letter-w", type=float, default=8.0,
                    help="Loss upweight on letter pixels")
+    p.add_argument("--adaptive", action="store_true")
     p.add_argument("--preview", action="store_true",
                    help="Only generate proposed TARGET frames, no training")
     a = p.parse_args()
@@ -426,4 +433,4 @@ if __name__ == "__main__":
         train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
               log_every=a.log_every, snap_dir=a.snap_dir, growth=a.growth,
               rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg,
-              lifespan=a.lifespan, letter_w=a.letter_w)
+              lifespan=a.lifespan, letter_w=a.letter_w, adaptive=a.adaptive)

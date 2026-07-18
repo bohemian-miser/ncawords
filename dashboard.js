@@ -191,20 +191,21 @@ async function bootstrap() {
 
 bootstrap().catch(err => console.error("Dashboard bootstrap failed", err));
     
-function applySeedFilter() {
+function applyFilters() {
     const filterVal = document.getElementById('seed-filter').value;
+    const q = (document.getElementById('search-box')?.value || '').toLowerCase();
     methods.forEach(m => {
         const el = document.getElementById(`card_${m.id}`);
         if (!el) return;
-        if (filterVal === 'all') {
-            el.style.display = 'block';
-        } else if (filterVal === m.seedType) {
-            el.style.display = 'block';
-        } else {
-            el.style.display = 'none';
-        }
+        const seedOk = filterVal === 'all' || filterVal === m.seedType;
+        const hay = (m.title + ' ' + (m.desc || '') + ' '
+                     + (m.tags || []).join(' ')).toLowerCase();
+        const searchOk = !q || hay.includes(q);
+        el.style.display = (seedOk && searchOk) ? 'block' : 'none';
     });
 }
+window.applyFilters = applyFilters;
+const applySeedFilter = applyFilters;   // legacy onchange handler
 
 function addCloudWeightOptions(selectBox) {
     // Cloud runs that published weights.json load straight from the bucket.

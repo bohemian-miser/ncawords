@@ -18,7 +18,7 @@ from nca.train import export_weights
 
 class RunMeta:
     def __init__(self, snap_dir, text, module, args, channel_n, hidden_n,
-                 seed_type, steps_total, device):
+                 seed_type, steps_total, device, tags=None):
         self.path = Path(snap_dir) / "run.json" if snap_dir else None
         self.d = {
             "text": text,
@@ -33,6 +33,7 @@ class RunMeta:
             "updated_at": None,
             "step": -1,
             "losses": [],
+            "tags": tags or [],
         }
         # A preempted-and-resumed job should extend the history, not clobber it.
         if self.path and self.path.exists():

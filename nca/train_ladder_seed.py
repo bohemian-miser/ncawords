@@ -25,12 +25,13 @@ from nca.model import NCA, to_rgba
 from nca.train_web_hidden import render_word_9_line, make_single_seed, damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import adaptive_rollout
 
 
 def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
           batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96,
           normal_p=0.25, damage_occasional=False, damage_p=0.3,
-          rho_target=0.0, rho_w=0.0,
+          rho_target=0.0, rho_w=0.0, adaptive=False,
           log_every=100, ckpt_every=500, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 55)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -59,8 +60,9 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
                    {"steps": steps, "batch": batch, "lr": lr,
                     "normal_p": normal_p, "damage_occasional": damage_occasional,
                     "damage_p": damage_p, "rho_target": rho_target,
-                    "rho_w": rho_w},
-                   channel_n, hidden_n, "single", steps, device)
+                    "rho_w": rho_w, "adaptive": adaptive},
+                   channel_n, hidden_n, "single", steps, device,
+                   tags=["ladder-seed"] + (["adaptive"] if adaptive else []))
 
     stage_steps = max(1, steps // 10)
     t0 = time.time()
@@ -82,8 +84,11 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
             x[-n_dmg:] = x[-n_dmg:] * m
 
         x_start = x[-1:].detach().clone()   # damaged-most input state for snapshots
-        n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
-        x = model(x, steps=n_ca)
+        if adaptive:
+            x, _used = adaptive_rollout(model, x, target, chunk=12, max_chunks=8)
+        else:
+            n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
+            x = model(x, steps=n_ca)
 
         normal_batch = torch.rand(1).item() < normal_p
         if noise_idx > 0 and not normal_batch:
@@ -147,9 +152,10 @@ if __name__ == "__main__":
     p.add_argument("--damage-occasional", action="store_true")
     p.add_argument("--rho-target", type=float, default=0.0)
     p.add_argument("--rho-w", type=float, default=0.0)
+    p.add_argument("--adaptive", action="store_true")
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
     train(a.text, steps=a.steps, log_every=a.log_every, normal_p=a.normal_p,
           damage_occasional=a.damage_occasional, rho_target=a.rho_target,
-          rho_w=a.rho_w, snap_dir=a.snap_dir)
+          rho_w=a.rho_w, adaptive=a.adaptive, snap_dir=a.snap_dir)
