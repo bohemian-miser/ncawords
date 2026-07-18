@@ -27,10 +27,18 @@ NEIGH = torch.tensor([[0., 1., 0.], [1., 0., 1.], [0., 1., 0.]])[None, None]
 
 
 def degree_loss(alpha):
-    """Penalize path cells whose 4-neighborhood count differs from 2."""
-    n = F.conv2d(alpha, NEIGH.to(alpha.device), padding=1)
-    onish = (alpha > 0.5).float()
-    return ((n - 2.0) ** 2 * onish).sum() / (onish.sum() + 1e-6)
+    """Penalize path cells whose 4-neighborhood count differs from 2.
+
+    Neighbor counting uses a SHARPENED alpha (steep sigmoid ~ binarized):
+    the v1 raw-alpha version was gamed by a uniform alpha=0.5 field whose
+    fractional neighbor-sum equals exactly 2 everywhere. A bimodality term
+    penalizes half-on cells so the hack has nowhere to hide."""
+    sharp = torch.sigmoid((alpha - 0.5) * 24.0)
+    n = F.conv2d(sharp, NEIGH.to(alpha.device), padding=1)
+    onish = (sharp > 0.5).float()
+    deg = ((n - 2.0) ** 2 * onish).sum() / (onish.sum() + 1e-6)
+    bimodal = (alpha * (1 - alpha)).mean() * 4.0
+    return deg + bimodal
 
 
 def train(order=3, steps=12000, canvas=None, channel_n=16, hidden_n=96,
