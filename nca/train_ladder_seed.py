@@ -27,6 +27,12 @@ from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
 from nca.rollout import adaptive_rollout
 
+try:
+    import hypertune
+    _HPT = hypertune.HyperTune()
+except Exception:
+    _HPT = None
+
 
 def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
           batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96, fire_rate=0.5,
@@ -124,6 +130,11 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
             pool[idx] = x.detach()
 
         if step % log_every == 0 or step == steps - 1:
+            if _HPT is not None:
+                _HPT.report_hyperparameter_tuning_metric(
+                    hyperparameter_metric_tag="loss",
+                    metric_value=float(loss.item()),
+                    global_step=step)
             print(f"[ladder_seed_{text}] step {step} loss {loss.item():.5f} "
                   f"noise {noise_idx:.1f}{' (normal)' if normal_batch else ''} "
                   f"({time.time() - t0:.1f}s)", flush=True)
@@ -157,13 +168,13 @@ if __name__ == "__main__":
     p.add_argument("--rho-w", type=float, default=0.0)
     p.add_argument("--adaptive", action="store_true")
     p.add_argument("--lr", type=float, default=2e-3)
-    p.add_argument("--hidden-n", type=int, default=80)
-    p.add_argument("--channel-n", type=int, default=16)
+    p.add_argument("--hidden-n", "--hidden_n", type=int, default=80)
+    p.add_argument("--channel-n", "--channel_n", type=int, default=16)
     p.add_argument("--batch", type=int, default=32)
-    p.add_argument("--pool-size", type=int, default=256)
-    p.add_argument("--ca-min", type=int, default=64)
-    p.add_argument("--ca-max", type=int, default=96)
-    p.add_argument("--fire-rate", type=float, default=0.5)
+    p.add_argument("--pool-size", "--pool_size", type=int, default=256)
+    p.add_argument("--ca-min", "--ca_min", type=int, default=64)
+    p.add_argument("--ca-max", "--ca_max", type=int, default=96)
+    p.add_argument("--fire-rate", "--fire_rate", type=float, default=0.5)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
