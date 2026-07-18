@@ -136,16 +136,19 @@ window.setSort = function(k) {
     sortKey = k;
     localStorage.setItem('dash_sort', k);
     sortCards();
+    initializeDropdown();   // dropdown follows the same order
 };
+
+function methodComparator(a, b) {
+    if (sortKey === 'name') return a.title.localeCompare(b.title);
+    // newest first; undated (local) entries last, alphabetical
+    return (b.updated || '').localeCompare(a.updated || '')
+           || a.title.localeCompare(b.title);
+}
 
 function sortCards() {
     const arr = [...methods];
-    if (sortKey === 'name') {
-        arr.sort((a, b) => a.title.localeCompare(b.title));
-    } else {   // newest first; undated (local) entries last, alphabetical
-        arr.sort((a, b) => (b.updated || '').localeCompare(a.updated || '')
-                           || a.title.localeCompare(b.title));
-    }
+    arr.sort(methodComparator);
     arr.forEach(m => {
         const el = document.getElementById(`card_${m.id}`);
         if (el) container.appendChild(el);   // append = reorder in place
@@ -213,8 +216,9 @@ window.applyFilters = applyFilters;
 const applySeedFilter = applyFilters;   // legacy onchange handler
 
 function addCloudWeightOptions(selectBox) {
-    // Cloud runs that published weights.json load straight from the bucket.
-    methods.forEach(m => {
+    // Cloud runs that published weights.json load straight from the bucket,
+    // ordered by the same sort as the cards.
+    [...methods].sort(methodComparator).forEach(m => {
         if (!m.weights_url) return;
         let opt = document.createElement('option');
         opt.value = m.weights_url;
