@@ -29,7 +29,7 @@ from nca.rollout import adaptive_rollout
 
 
 def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
-          batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96,
+          batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96, fire_rate=0.5,
           normal_p=0.25, damage_occasional=False, damage_p=0.3,
           rho_target=0.0, rho_w=0.0, adaptive=False,
           log_every=100, ckpt_every=500, snap_dir=None):
@@ -46,7 +46,7 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
         Image.fromarray((tgt.transpose(1, 2, 0) * 255).astype(np.uint8)) \
             .save(Path(snap_dir) / "target.png")
 
-    model = NCA(channel_n, hidden_n=hidden_n).to(device)
+    model = NCA(channel_n, fire_rate=fire_rate, hidden_n=hidden_n).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.MultiStepLR(
         opt, milestones=[int(steps * 0.8)], gamma=0.1)
@@ -60,7 +60,10 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
                    {"steps": steps, "batch": batch, "lr": lr,
                     "normal_p": normal_p, "damage_occasional": damage_occasional,
                     "damage_p": damage_p, "rho_target": rho_target,
-                    "rho_w": rho_w, "adaptive": adaptive},
+                    "rho_w": rho_w, "adaptive": adaptive,
+                    "hidden_n": hidden_n, "channel_n": channel_n,
+                    "fire_rate": fire_rate, "lr_": lr, "batch_": batch,
+                    "pool_size": pool_size, "ca_min": ca_min, "ca_max": ca_max},
                    channel_n, hidden_n, "single", steps, device,
                    tags=["ladder-seed"] + (["adaptive"] if adaptive else []))
 
@@ -153,9 +156,20 @@ if __name__ == "__main__":
     p.add_argument("--rho-target", type=float, default=0.0)
     p.add_argument("--rho-w", type=float, default=0.0)
     p.add_argument("--adaptive", action="store_true")
+    p.add_argument("--lr", type=float, default=2e-3)
+    p.add_argument("--hidden-n", type=int, default=80)
+    p.add_argument("--channel-n", type=int, default=16)
+    p.add_argument("--batch", type=int, default=32)
+    p.add_argument("--pool-size", type=int, default=256)
+    p.add_argument("--ca-min", type=int, default=64)
+    p.add_argument("--ca-max", type=int, default=96)
+    p.add_argument("--fire-rate", type=float, default=0.5)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
     train(a.text, steps=a.steps, log_every=a.log_every, normal_p=a.normal_p,
           damage_occasional=a.damage_occasional, rho_target=a.rho_target,
-          rho_w=a.rho_w, adaptive=a.adaptive, snap_dir=a.snap_dir)
+          rho_w=a.rho_w, adaptive=a.adaptive, lr=a.lr, hidden_n=a.hidden_n,
+          channel_n=a.channel_n, batch=a.batch, pool_size=a.pool_size,
+          ca_min=a.ca_min, ca_max=a.ca_max, fire_rate=a.fire_rate,
+          snap_dir=a.snap_dir)
