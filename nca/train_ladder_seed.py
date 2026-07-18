@@ -30,6 +30,7 @@ from nca.runmeta import RunMeta, export_run_weights
 def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
           batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96,
           normal_p=0.25, damage_occasional=False, damage_p=0.3,
+          rho_target=0.0, rho_w=0.0,
           log_every=100, ckpt_every=500, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 55)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -57,7 +58,8 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
     meta = RunMeta(snap_dir, text, "nca.train_ladder_seed",
                    {"steps": steps, "batch": batch, "lr": lr,
                     "normal_p": normal_p, "damage_occasional": damage_occasional,
-                    "damage_p": damage_p},
+                    "damage_p": damage_p, "rho_target": rho_target,
+                    "rho_w": rho_w},
                    channel_n, hidden_n, "single", steps, device)
 
     stage_steps = max(1, steps // 10)
@@ -89,6 +91,18 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
             loss = F.mse_loss(to_rgba(x), target_noisy)
         else:
             loss = F.mse_loss(to_rgba(x), target)
+
+        # Edge-of-chaos regularizer: pull the deterministic step's local
+        # Jacobian gain toward rho_target (one JVP, ~2 extra forwards).
+        if rho_w > 0 and step % 2 == 0:
+            xp = x[:1].detach()
+            v = torch.randn_like(xp)
+            v = v / (torch.linalg.vector_norm(v) + 1e-8)
+            _, jv = torch.autograd.functional.jvp(
+                lambda y: model.step(y, fire_rate=1.0), (xp,), (v,),
+                create_graph=True)
+            rho_est = torch.linalg.vector_norm(jv)
+            loss = loss + rho_w * (rho_est - rho_target) ** 2
 
         opt.zero_grad()
         loss.backward()
@@ -131,8 +145,11 @@ if __name__ == "__main__":
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--normal-p", type=float, default=0.25)
     p.add_argument("--damage-occasional", action="store_true")
+    p.add_argument("--rho-target", type=float, default=0.0)
+    p.add_argument("--rho-w", type=float, default=0.0)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
     train(a.text, steps=a.steps, log_every=a.log_every, normal_p=a.normal_p,
-          damage_occasional=a.damage_occasional, snap_dir=a.snap_dir)
+          damage_occasional=a.damage_occasional, rho_target=a.rho_target,
+          rho_w=a.rho_w, snap_dir=a.snap_dir)
