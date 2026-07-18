@@ -156,3 +156,84 @@ def rasterize(leaves, canvas=72, scale=5.0, center=None, upscale=1):
     arr = np.asarray(img, np.float32) / 255.0
     arr[..., :3] *= arr[..., 3:]
     return arr.transpose(2, 0, 1)
+
+
+def rasterize_crisp(leaves, canvas=72, scale=5.0, center=None, edge_px=0.6):
+    """Exact rasterization, no image library: crossing-number interior test
+    on pixel centers plus true distance-to-boundary for 1px crisp edges.
+
+    Returns (edge_mask [H,W] bool, interior_label [H,W] int32 (-1 = none),
+    labels list) — callers build whatever target/loss they want from it.
+    """
+    if center is None:
+        pts = np.concatenate([apply(T, SPECTRE) for _, T in leaves[:400]])
+        center = pts.mean(axis=0)
+    H = W = canvas
+    half = canvas / 2.0
+    edge = np.zeros((H, W), bool)
+    interior = -np.ones((H, W), np.int32)
+    labels = []
+    for li, (label, T) in enumerate(leaves):
+        pix = (apply(T, SPECTRE) - center) * scale + half   # (x, y)
+        x0 = max(0, int(np.floor(pix[:, 0].min() - 1)))
+        x1 = min(W - 1, int(np.ceil(pix[:, 0].max() + 1)))
+        y0 = max(0, int(np.floor(pix[:, 1].min() - 1)))
+        y1 = min(H - 1, int(np.ceil(pix[:, 1].max() + 1)))
+        if x1 < x0 or y1 < y0:
+            labels.append(label)
+            continue
+        gy, gx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+        px = gx.astype(np.float64)
+        py = gy.astype(np.float64)
+        inside = np.zeros(px.shape, bool)
+        dmin = np.full(px.shape, 1e9)
+        n = len(pix)
+        for i in range(n):
+            xa1, ya1 = pix[i]
+            xa2, ya2 = pix[(i + 1) % n]
+            cond = ((ya1 > py) != (ya2 > py))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                xin = (xa2 - xa1) * (py - ya1) / (ya2 - ya1) + xa1
+            inside ^= cond & (px < xin)
+            # point-segment distance
+            vx, vy = xa2 - xa1, ya2 - ya1
+            L2 = vx * vx + vy * vy
+            t = np.clip(((px - xa1) * vx + (py - ya1) * vy) / max(L2, 1e-12), 0, 1)
+            d = np.hypot(px - (xa1 + t * vx), py - (ya1 + t * vy))
+            dmin = np.minimum(dmin, d)
+        e = dmin <= edge_px
+        edge[y0:y1 + 1, x0:x1 + 1] |= e
+        put = inside & ~e
+        interior[y0:y1 + 1, x0:x1 + 1] = np.where(
+            put, li, interior[y0:y1 + 1, x0:x1 + 1])
+        labels.append(label)
+    return edge, interior, labels
+
+
+def crisp_target(edge, interior, labels, mode="fill"):
+    """RGBA [4,H,W] from crisp masks. Modes:
+    outline: dark edges only, empty interiors.
+    fill:    dark edges + exact per-class interior colors.
+    free:    dark edges + interiors marked present at alpha=1 with NEUTRAL
+             rgb 0.5 (trainers should not supervise interior rgb — only
+             presence and being distinct from the near-black outline)."""
+    H, W = edge.shape
+    arr = np.zeros((4, H, W), np.float32)
+    arr[3][edge] = 1.0            # edges: near-black
+    arr[:3, edge] = 0.08
+    inter = interior >= 0
+    if mode == "outline":
+        return arr
+    arr[3][inter] = 1.0
+    if mode == "fill":
+        for li, label in enumerate(labels):
+            m = interior == li
+            if not m.any():
+                continue
+            c = np.array(PALETTE[label], np.float32) / 255.0
+            for ch in range(3):
+                arr[ch][m] = c[ch]
+    else:                          # free
+        for ch in range(3):
+            arr[ch][inter] = 0.5
+    return arr

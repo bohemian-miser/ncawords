@@ -20,8 +20,10 @@ import torch.nn.functional as F
 from PIL import Image
 
 from nca.model import NCA, to_rgba
-from nca.spectre import spectre_leaves, rasterize, SPECTRE, apply
+from nca.spectre import (spectre_leaves, rasterize, rasterize_crisp,
+                         crisp_target, SPECTRE, apply)
 from nca.checkpoint import save_checkpoint, try_resume
+from nca.rollout import fester
 from nca.runmeta import RunMeta, export_run_weights
 
 CANVAS = 72
@@ -31,7 +33,7 @@ STAGES = [(0.80, 14.0), (0.65, 10.0), (0.50, 7.0), (0.35, 5.0),
 
 def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=128,
           lr=2e-3, chunk=8, max_chunks=10, improve_eps=0.02, gate=0.02,
-          adaptive=True, ca_min=48, ca_max=72,
+          adaptive=True, ca_min=48, ca_max=72, render="fill", fester_p=0.0,
           log_every=100, ckpt_every=500, snap_dir=None, rng_seed=0):
     torch.manual_seed(101)
     rng = np.random.default_rng(rng_seed)
@@ -42,9 +44,13 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=128,
     leaves = spectre_leaves(3)
     pts = np.concatenate([apply(T, SPECTRE) for _, T in leaves])
     center = pts.mean(axis=0)
-    targets_np = [rasterize(leaves, CANVAS, scale, center=center, upscale=4)
-                  for _, scale in STAGES]
-    print(f"{len(leaves)} tiles; {len(STAGES)} zoom stages rendered")
+    targets_np, edge_masks, inter_masks = [], [], []
+    for _, scale in STAGES:
+        edge, interior, labels = rasterize_crisp(leaves, CANVAS, scale, center)
+        targets_np.append(crisp_target(edge, interior, labels, render))
+        edge_masks.append(edge)
+        inter_masks.append(interior >= 0)
+    print(f"{len(leaves)} tiles; {len(STAGES)} crisp '{render}' stages rendered")
 
     if snap_dir:
         Path(snap_dir).mkdir(parents=True, exist_ok=True)
@@ -66,8 +72,10 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=128,
     meta = RunMeta(snap_dir, "SPECTRE", "nca.train_spectre",
                    {"steps": steps, "batch": batch, "lr": lr, "gate": gate,
                     "adaptive": adaptive, "chunk": chunk,
-                    "max_chunks": max_chunks, "improve_eps": improve_eps},
-                   channel_n, hidden_n, "noise", steps, device)
+                    "max_chunks": max_chunks, "improve_eps": improve_eps,
+                    "render": render, "fester_p": fester_p},
+                   channel_n, hidden_n, "noise", steps, device,
+                   tags=["spectre", render] + (["adaptive"] if adaptive else []))
 
     recent = []
     stage_cap = max(1, int(steps / len(STAGES) * 1.5))
@@ -86,6 +94,8 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=128,
         # worst sample restarts from fresh noise (keeps nucleation trained)
         x[:1] = torch.rand_like(x[:1])
 
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x, min_steps=100, max_steps=350)
         used_steps = 0
         if adaptive:
             prev = None
@@ -101,7 +111,23 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=128,
             x = model(x, steps=n_ca)
             used_steps = n_ca
 
-        if noise_lvl > 0:
+        if render == "free":
+            # presence everywhere covered; rgb supervised only on edges
+            # (near-black); interiors need only be DISTINCT from the
+            # outline — brightness above a margin, color unconstrained,
+            # so the model may build whatever internal machinery it likes.
+            em = torch.from_numpy(edge_masks[stage]).to(device)
+            im_ = torch.from_numpy(inter_masks[stage]).to(device)
+            a_t = target[:, 3:4]
+            if noise_lvl > 0:
+                a_t = a_t * (1 - noise_lvl) + torch.rand_like(a_t) * noise_lvl
+            loss = F.mse_loss(x[:, 3:4], a_t)
+            loss = loss + ((x[:, :3] - 0.08) ** 2 * em[None, None]).sum() \
+                / (em.sum() * 3 * batch + 1e-8)
+            bright = x[:, :3].mean(dim=1, keepdim=True)
+            loss = loss + (F.relu(0.35 - bright) ** 2 * im_[None, None]).sum() \
+                / (im_.sum() * batch + 1e-8)
+        elif noise_lvl > 0:
             tnoisy = target * (1 - noise_lvl) + torch.rand_like(target) * noise_lvl
             loss = F.mse_loss(to_rgba(x), tnoisy)
         else:
@@ -159,9 +185,12 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=16000)
     p.add_argument("--gate", type=float, default=0.02)
     p.add_argument("--no-adaptive", action="store_true")
+    p.add_argument("--render", default="fill", choices=["outline", "fill", "free"])
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(steps=a.steps, gate=a.gate, adaptive=not a.no_adaptive,
-          rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
+          render=a.render, fester_p=a.fester_p, rng_seed=a.rng_seed,
+          log_every=a.log_every, snap_dir=a.snap_dir)

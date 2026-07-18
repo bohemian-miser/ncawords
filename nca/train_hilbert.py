@@ -21,7 +21,7 @@ from nca.hilbert import rasterize_curve, field_invariants
 from nca.train_web_hidden import damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
-from nca.rollout import adaptive_rollout
+from nca.rollout import adaptive_rollout, fester
 
 NEIGH = torch.tensor([[0., 1., 0.], [1., 0., 1.], [0., 1., 0.]])[None, None]
 
@@ -35,7 +35,7 @@ def degree_loss(alpha):
 
 def train(order=3, steps=12000, canvas=None, channel_n=16, hidden_n=96,
           batch=12, pool_size=256, lr=2e-3, ca_min=64, ca_max=96,
-          damage_p=0.3, degree_w=0.0, adaptive=False,
+          damage_p=0.3, degree_w=0.0, adaptive=False, fester_p=0.0,
           log_every=200, ckpt_every=500, snap_dir=None):
     torch.manual_seed(4000 + order)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -66,7 +66,7 @@ def train(order=3, steps=12000, canvas=None, channel_n=16, hidden_n=96,
     meta = RunMeta(snap_dir, f"H{order}", "nca.train_hilbert",
                    {"order": order, "steps": steps, "batch": batch, "lr": lr,
                     "degree_w": degree_w, "adaptive": adaptive,
-                    "damage_p": damage_p},
+                    "damage_p": damage_p, "fester_p": fester_p},
                    channel_n, hidden_n, "single", steps, device,
                    tags=["hilbert", f"order{order}"]
                         + (["adaptive"] if adaptive else [])
@@ -85,6 +85,9 @@ def train(order=3, steps=12000, canvas=None, channel_n=16, hidden_n=96,
             m = damage_mask_rect(2, canvas, canvas, device)
             x[-2:] = x[-2:] * m
 
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x,
+                       damage_fn=lambda z: z * damage_mask_rect(2, canvas, canvas, device))
         x_start = x[-1:].detach().clone()
         if adaptive:
             x, _u = adaptive_rollout(model, x, target, chunk=12, max_chunks=8)
@@ -139,8 +142,10 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=12000)
     p.add_argument("--degree-w", type=float, default=0.0)
     p.add_argument("--adaptive", action="store_true")
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(order=a.order, steps=a.steps, degree_w=a.degree_w,
-          adaptive=a.adaptive, log_every=a.log_every, snap_dir=a.snap_dir)
+          adaptive=a.adaptive, fester_p=a.fester_p,
+          log_every=a.log_every, snap_dir=a.snap_dir)

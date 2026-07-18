@@ -25,7 +25,7 @@ from nca.model import NCA, to_rgba
 from nca.train_web_hidden import render_word_9_line, make_single_seed, damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
-from nca.rollout import adaptive_rollout
+from nca.rollout import adaptive_rollout, fester
 
 try:
     import hypertune
@@ -37,7 +37,7 @@ except Exception:
 def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
           batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96, fire_rate=0.5,
           normal_p=0.25, damage_occasional=False, damage_p=0.3,
-          rho_target=0.0, rho_w=0.0, adaptive=False,
+          rho_target=0.0, rho_w=0.0, adaptive=False, fester_p=0.0,
           log_every=100, ckpt_every=500, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 55)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -66,7 +66,7 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
                    {"steps": steps, "batch": batch, "lr": lr,
                     "normal_p": normal_p, "damage_occasional": damage_occasional,
                     "damage_p": damage_p, "rho_target": rho_target,
-                    "rho_w": rho_w, "adaptive": adaptive,
+                    "rho_w": rho_w, "adaptive": adaptive, "fester_p": fester_p,
                     "hidden_n": hidden_n, "channel_n": channel_n,
                     "fire_rate": fire_rate, "lr_": lr, "batch_": batch,
                     "pool_size": pool_size, "ca_min": ca_min, "ca_max": ca_max},
@@ -92,6 +92,9 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
             m = damage_mask_rect(n_dmg, h, w, device)
             x[-n_dmg:] = x[-n_dmg:] * m
 
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x,
+                       damage_fn=lambda z: z * damage_mask_rect(2, h, w, device))
         x_start = x[-1:].detach().clone()   # damaged-most input state for snapshots
         if adaptive:
             x, _used = adaptive_rollout(model, x, target, chunk=12, max_chunks=8)
@@ -167,6 +170,7 @@ if __name__ == "__main__":
     p.add_argument("--rho-target", type=float, default=0.0)
     p.add_argument("--rho-w", type=float, default=0.0)
     p.add_argument("--adaptive", action="store_true")
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--hidden-n", "--hidden_n", type=int, default=80)
     p.add_argument("--channel-n", "--channel_n", type=int, default=16)
@@ -180,7 +184,8 @@ if __name__ == "__main__":
 
     train(a.text, steps=a.steps, log_every=a.log_every, normal_p=a.normal_p,
           damage_occasional=a.damage_occasional, rho_target=a.rho_target,
-          rho_w=a.rho_w, adaptive=a.adaptive, lr=a.lr, hidden_n=a.hidden_n,
+          rho_w=a.rho_w, adaptive=a.adaptive, fester_p=a.fester_p,
+          lr=a.lr, hidden_n=a.hidden_n,
           channel_n=a.channel_n, batch=a.batch, pool_size=a.pool_size,
           ca_min=a.ca_min, ca_max=a.ca_max, fire_rate=a.fire_rate,
           snap_dir=a.snap_dir)
