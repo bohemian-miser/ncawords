@@ -69,12 +69,24 @@ def place(canvas, patch, y, x):
     canvas[:, y:y + h, x:x + w] = np.maximum(canvas[:, y:y + h, x:x + w], patch)
 
 
-def sample_scene(word, ys, xs, rng, max_cands=3, delta=0.15):
+def sample_scene(word, ys, xs, rng, max_cands=3, delta=0.15, nucleate_p=0.0):
     """Returns (input RGBA, target RGBA) as [4,CANVAS,CANVAS] numpy."""
     _, h, w = word.shape
     kind = rng.random()
     inp = np.zeros((4, CANVAS, CANVAS), np.float32)
     tgt = np.zeros((4, CANVAS, CANVAS), np.float32)
+
+    if kind < nucleate_p:
+        # nucleation: noise condenses into a few small candidates. Target
+        # positions are random (not derivable from the input), so the model
+        # can only learn the statistical rule: noise -> sparse proto-seeds.
+        inp[:] = rng.random((4, CANVAS, CANVAS)) * rng.uniform(0.3, 0.8)
+        for _ in range(int(rng.integers(2, 4))):
+            f = rng.uniform(0.12, 0.3)
+            y = int(rng.integers(0, CANVAS - h)); x = int(rng.integers(0, CANVAS - w))
+            place(tgt, partial(word, ys, xs, f), y, x)
+        return inp, tgt
+    kind = (kind - nucleate_p) / max(1e-9, 1 - nucleate_p)
 
     def rand_pos(taken):
         for _ in range(40):
@@ -126,7 +138,7 @@ def build_state(rgba, channel_n, rng, hidden_noise=0.1):
 
 def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
           batch=16, lr=2e-3, ca_min=12, ca_max=24, max_cands=3, delta=0.15,
-          log_every=100, snap_dir=None, rng_seed=0):
+          nucleate_p=0.0, log_every=100, snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 5)
     rng = np.random.default_rng(rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -153,14 +165,15 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
 
     meta = RunMeta(snap_dir, text, "nca.train_negotiate",
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
-                    "max_cands": max_cands, "delta": delta, "rng_seed": rng_seed},
+                    "max_cands": max_cands, "delta": delta,
+                    "nucleate_p": nucleate_p, "rng_seed": rng_seed},
                    channel_n, hidden_n, "negotiate", steps, device)
 
     t0 = time.time()
     for step in range(start_step, steps):
         inps, tgts = [], []
         for _ in range(batch):
-            i, t = sample_scene(word, ys, xs, rng, max_cands, delta)
+            i, t = sample_scene(word, ys, xs, rng, max_cands, delta, nucleate_p)
             inps.append(build_state(i, channel_n, rng))
             tgts.append(t)
         x = torch.from_numpy(np.stack(inps)).to(device)
@@ -226,6 +239,8 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=8000)
     p.add_argument("--max-cands", type=int, default=3)
     p.add_argument("--delta", type=float, default=0.15)
+    p.add_argument("--nucleate-p", type=float, default=0.0,
+                   help="Fraction of batches teaching noise -> proto-seeds")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
@@ -237,4 +252,5 @@ if __name__ == "__main__":
                        max_cands=a.max_cands, delta=a.delta, rng_seed=a.rng_seed)
     else:
         train(a.text, steps=a.steps, max_cands=a.max_cands, delta=a.delta,
-              rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
+              nucleate_p=a.nucleate_p, rng_seed=a.rng_seed,
+              log_every=a.log_every, snap_dir=a.snap_dir)
