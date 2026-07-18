@@ -136,9 +136,39 @@ def build_state(rgba, channel_n, rng, hidden_noise=0.1):
     return x
 
 
+def make_self_batch(model, word, ys, xs, rng, batch, channel_n, delta, device):
+    """Self-refereed scenes: run the model on noise, find its own strongest
+    blob via 0-dim persistence, and build the target there — advance the
+    winner the model actually made, dissolve everything else."""
+    from nca.topology import persistence_0d
+    _, h, w = word.shape
+    with torch.no_grad():
+        z = torch.rand(batch, channel_n, CANVAS, CANVAS, device=device)
+        z = model(z, steps=int(rng.integers(24, 64)))
+    tgts = np.zeros((batch, 4, CANVAS, CANVAS), np.float32)
+    for i in range(batch):
+        a = z[i, 3].clamp(0, 1).cpu().numpy()
+        events = persistence_0d(a, min_persistence=0.05)
+        if events:
+            b_, d_, (py, px) = max(events, key=lambda e: e[0] - e[1])
+            y0 = int(np.clip(py - h // 2, 0, CANVAS - h))
+            x0 = int(np.clip(px - w // 2, 0, CANVAS - w))
+            p = partial_np_local(word, ys, xs, 0.3 + delta)
+            tgts[i, :, y0:y0 + h, x0:x0 + w] = p
+    return z.detach(), torch.from_numpy(tgts).to(device)
+
+
+def partial_np_local(word, ys, xs, frac):
+    out = np.zeros_like(word)
+    k = int(len(ys) * np.clip(frac, 0, 1))
+    if k:
+        out[:, ys[:k], xs[:k]] = word[:, ys[:k], xs[:k]]
+    return out
+
+
 def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
           batch=16, lr=2e-3, ca_min=12, ca_max=24, max_cands=3, delta=0.15,
-          nucleate_p=0.0, log_every=100, snap_dir=None, rng_seed=0):
+          nucleate_p=0.0, self_p=0.0, log_every=100, snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 5)
     rng = np.random.default_rng(rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -166,18 +196,23 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
     meta = RunMeta(snap_dir, text, "nca.train_negotiate",
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
                     "max_cands": max_cands, "delta": delta,
-                    "nucleate_p": nucleate_p, "rng_seed": rng_seed},
+                    "nucleate_p": nucleate_p, "self_p": self_p,
+                    "rng_seed": rng_seed},
                    channel_n, hidden_n, "negotiate", steps, device)
 
     t0 = time.time()
     for step in range(start_step, steps):
-        inps, tgts = [], []
-        for _ in range(batch):
-            i, t = sample_scene(word, ys, xs, rng, max_cands, delta, nucleate_p)
-            inps.append(build_state(i, channel_n, rng))
-            tgts.append(t)
-        x = torch.from_numpy(np.stack(inps)).to(device)
-        tgt = torch.from_numpy(np.stack(tgts)).to(device)
+        if self_p > 0 and rng.random() < self_p:
+            x, tgt = make_self_batch(model, word, ys, xs, rng, batch,
+                                     channel_n, delta, device)
+        else:
+            inps, tgts = [], []
+            for _ in range(batch):
+                i, t = sample_scene(word, ys, xs, rng, max_cands, delta, nucleate_p)
+                inps.append(build_state(i, channel_n, rng))
+                tgts.append(t)
+            x = torch.from_numpy(np.stack(inps)).to(device)
+            tgt = torch.from_numpy(np.stack(tgts)).to(device)
         x_start = x[:1].detach().clone()
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
@@ -241,6 +276,8 @@ if __name__ == "__main__":
     p.add_argument("--delta", type=float, default=0.15)
     p.add_argument("--nucleate-p", type=float, default=0.0,
                    help="Fraction of batches teaching noise -> proto-seeds")
+    p.add_argument("--self-p", type=float, default=0.0,
+                   help="Fraction of self-refereed batches (persistence-picked winner)")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
@@ -252,5 +289,5 @@ if __name__ == "__main__":
                        max_cands=a.max_cands, delta=a.delta, rng_seed=a.rng_seed)
     else:
         train(a.text, steps=a.steps, max_cands=a.max_cands, delta=a.delta,
-              nucleate_p=a.nucleate_p, rng_seed=a.rng_seed,
+              nucleate_p=a.nucleate_p, self_p=a.self_p, rng_seed=a.rng_seed,
               log_every=a.log_every, snap_dir=a.snap_dir)
