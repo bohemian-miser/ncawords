@@ -21,9 +21,12 @@ from nca.runmeta import RunMeta, export_run_weights
 from nca.rollout import adaptive_rollout
 
 
-def render_targets(words, glyph=12):
-    """Render each word centered on a shared canvas sized for the longest."""
-    rendered = [render_word_9_line(w, glyph, char_alpha=255, strand_alpha=0)
+def render_targets(words, glyph=12, strand_alpha=64):
+    """Render each word centered on a shared canvas sized for the longest.
+    strand_alpha > 0 keeps the 9-line scaffold — the multi-letter
+    coordination mechanism the basics sweep proved necessary."""
+    rendered = [render_word_9_line(w, glyph, char_alpha=255,
+                                   strand_alpha=strand_alpha)
                 for w in words]
     H = max(r.shape[1] for r in rendered)
     W = max(r.shape[2] for r in rendered)
