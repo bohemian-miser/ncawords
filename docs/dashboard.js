@@ -13,25 +13,27 @@ const BUCKET = 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
 const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name),nextPageToken&maxResults=1000`;
 
-async function listCloudRuns() {
+async function listCloudRuns(onPage) {
     const runs = {};
     let pageToken = null;
     do {
         const res = await fetch(BUCKET_LIST + (pageToken ? `&pageToken=${pageToken}` : ''));
         if (!res.ok) throw new Error(`bucket list failed: ${res.status}`);
         const d = await res.json();
-        (d.items || []).forEach(({name}) => {
+        (d.items || []).forEach(({name, updated}) => {
             const i = name.indexOf('/');
             if (i < 0) return;
             const run = name.slice(0, i), fname = name.slice(i + 1);
-            if (!runs[run]) runs[run] = {maxStep: -1, hasWeights: false};
+            if (!runs[run]) runs[run] = {maxStep: -1, hasWeights: false, updated: ''};
             if (fname.startsWith('COMP_')) {
                 const s = parseInt(fname.slice(5, 10));
                 if (!isNaN(s)) runs[run].maxStep = Math.max(runs[run].maxStep, s);
+                if (updated && updated > runs[run].updated) runs[run].updated = updated;
             } else if (fname === 'weights.json') {
                 runs[run].hasWeights = true;
             }
         });
+        if (onPage) onPage(runs);   // stream cards page by page
         pageToken = d.nextPageToken;
     } while (pageToken);
     return runs;
@@ -45,7 +47,8 @@ function cloudMethodsFrom(runs) {
             dir: BUCKET_BASE + run + '/',
             desc: 'Vertex AI training run (live from the public bucket)',
             seedType: 'cloud',
-            cloud: true
+            cloud: true,
+            updated: runs[run].updated
         };
         if (runs[run].hasWeights) m.weights_url = BUCKET_BASE + run + '/weights.json';
         return m;
@@ -68,53 +71,107 @@ async function staticStatusLoop() {
     setTimeout(staticStatusLoop, 15000);
 }
 
-async function bootstrap() {
-    // Prefer the local orchestration server; fall back to reading the
-    // public bucket directly (gh-pages / any static hosting).
-    try {
-        const res = await fetch('/api/methods?t=' + Date.now());
-        if (!res.ok) throw new Error(`no backend (${res.status})`);
-        methods = await res.json();
-    } catch (e) {
-        staticMode = true;
-        methods = cloudMethodsFrom(await listCloudRuns());
-    }
+const seenIds = new Set();
+let sortKey = localStorage.getItem('dash_sort') || 'newest';
 
-    // Build cards without innerHTML concatenations
-    methods.forEach(m => {
+function addOrUpdateCards(list) {
+    let added = false;
+    list.forEach(m => {
+        if (seenIds.has(m.id)) {
+            const tr = cardTrackers.find(t => t.id === m.id);
+            if (tr) {
+                if (m.vertex_state) tr.vertexState = m.vertex_state;
+                if (m.updated) tr.updated = m.updated;
+            }
+            const known = methods.find(x => x.id === m.id);
+            if (known && m.weights_url) known.weights_url = m.weights_url;
+            return;
+        }
+        seenIds.add(m.id);
+        methods.push(m);
+        added = true;
         const card = document.createElement('div');
         card.className = 'card';
         card.id = `card_${m.id}`;
         card.onclick = () => openModal(m.title, m.dir, m.desc);
-
         card.innerHTML = `
             <h3>${m.title}</h3>
             <div class="side-by-side">
                 <div>
                     <div class="sub-desc">Live Target</div>
-                    <div class="img-container"><img id="live_tgt_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onerror="this.src='${m.dir}target.png'"></div>
+                    <div class="img-container"><img loading="lazy" id="live_tgt_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" onerror="this.src='${m.dir}target.png'"></div>
                 </div>
                 <div>
                     <div class="sub-desc">Latest Checkpoint</div>
-                    <div class="img-container"><img id="live_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></div>
+                    <div class="img-container"><img loading="lazy" id="live_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></div>
                 </div>
             </div>
-            <div class="status" id="live_status_${m.id}">Loading Server State...</div>
+            <div class="status" id="live_status_${m.id}">Loading...</div>
         `;
         container.appendChild(card);
+        cardTrackers.push({
+            id: m.id,
+            dir: m.dir,
+            updated: m.updated || '',
+            cardObj: card,
+            imgObj: card.querySelector(`#live_${CSS.escape(m.id)}`),
+            tgtObj: card.querySelector(`#live_tgt_${CSS.escape(m.id)}`),
+            statusObj: card.querySelector(`#live_status_${CSS.escape(m.id)}`),
+            vertexState: m.vertex_state || null,
+            lastKnownStep: -100
+        });
     });
+    if (added) {
+        sortCards();
+        initializeDropdown();
+    }
+}
 
-    initializeDropdown();
+window.setSort = function(k) {
+    sortKey = k;
+    localStorage.setItem('dash_sort', k);
+    sortCards();
+};
 
-    cardTrackers = methods.map(m => ({
-        dir: m.dir,
-        cardObj: document.getElementById(`card_${m.id}`),
-        imgObj: document.getElementById(`live_${m.id}`),
-        tgtObj: document.getElementById(`live_tgt_${m.id}`),
-        statusObj: document.getElementById(`live_status_${m.id}`),
-        vertexState: m.vertex_state || null,
-        lastKnownStep: -100
-    }));
+function sortCards() {
+    const arr = [...methods];
+    if (sortKey === 'name') {
+        arr.sort((a, b) => a.title.localeCompare(b.title));
+    } else {   // newest first; undated (local) entries last, alphabetical
+        arr.sort((a, b) => (b.updated || '').localeCompare(a.updated || '')
+                           || a.title.localeCompare(b.title));
+    }
+    arr.forEach(m => {
+        const el = document.getElementById(`card_${m.id}`);
+        if (el) container.appendChild(el);   // append = reorder in place
+    });
+}
+
+async function refreshMethods() {
+    try {
+        if (staticMode) {
+            addOrUpdateCards(cloudMethodsFrom(await listCloudRuns()));
+        } else {
+            const res = await fetch('/api/methods?t=' + Date.now());
+            if (res.ok) addOrUpdateCards(await res.json());
+        }
+    } catch (e) { console.error('refresh failed', e); }
+}
+
+async function bootstrap() {
+    const sortSel = document.getElementById('sort-select');
+    if (sortSel) sortSel.value = sortKey;
+    // Prefer the local orchestration server; fall back to reading the
+    // public bucket directly (gh-pages / any static hosting). Cards are
+    // streamed in as data arrives rather than waiting for everything.
+    try {
+        const res = await fetch('/api/methods?t=' + Date.now());
+        if (!res.ok) throw new Error(`no backend (${res.status})`);
+        addOrUpdateCards(await res.json());
+    } catch (e) {
+        staticMode = true;
+        await listCloudRuns(runs => addOrUpdateCards(cloudMethodsFrom(runs)));
+    }
 
     if (staticMode) {
         staticStatusLoop();
@@ -129,6 +186,7 @@ async function bootstrap() {
             console.error("SSE Connection Error");
         };
     }
+    setInterval(refreshMethods, 25000);   // new runs appear without reload
 }
 
 bootstrap().catch(err => console.error("Dashboard bootstrap failed", err));
@@ -161,7 +219,9 @@ function addCloudWeightOptions(selectBox) {
 
 function initializeDropdown() {
     const selectBox = document.getElementById("interactive-model-select");
+    const prev = selectBox.value;   // preserve selection across refreshes
     selectBox.innerHTML = '';
+    selectBox.dataset.prev = prev;
 
     fetch('weights/index.json?t=' + Date.now())
         .then(r => r.json())
@@ -180,6 +240,7 @@ function initializeDropdown() {
                 }
             });
             addCloudWeightOptions(selectBox);
+            if (selectBox.dataset.prev) selectBox.value = selectBox.dataset.prev;
         })
         .catch(err => {
             methods.forEach(m => {
@@ -190,6 +251,7 @@ function initializeDropdown() {
                 selectBox.appendChild(opt);
             });
             addCloudWeightOptions(selectBox);
+            if (selectBox.dataset.prev) selectBox.value = selectBox.dataset.prev;
         });
 }
 

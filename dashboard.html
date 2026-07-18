@@ -45,6 +45,11 @@
         <option value="single">Single Central Seed Only</option>
         <option value="noise">Noise / Cloud Seed Only</option>
     </select>
+    <strong style="margin-left: 20px;">Sort: </strong>
+    <select id="sort-select" onchange="setSort(this.value)" style="padding: 5px 15px; border-radius: 4px; border: 1px solid #444; background: #222; color: #fff;">
+        <option value="newest">Newest first</option>
+        <option value="name">Name</option>
+    </select>
 </div>
 
 <div id="cards-container"></div>

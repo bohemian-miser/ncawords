@@ -102,7 +102,12 @@ def _fetch_cloud_state_now():
                     step = int(fname[5:10])
                 except ValueError:
                     continue
-                runs[run] = max(runs.get(run, -1), step)
+                r = runs.setdefault(run, {"step": -1, "updated": ""})
+                r["step"] = max(r["step"], step)
+                if blob.updated:
+                    u = blob.updated.isoformat()
+                    if u > r["updated"]:
+                        r["updated"] = u
             elif fname == "weights.json":
                 weights.append(run)
     except Exception as e:
@@ -125,9 +130,11 @@ def get_methods():
         with open("methods.json") as f:
             methods = json.load(f)
 
-    cloud = fetch_cloud_state()
+    # Non-blocking: serve local methods + whatever cloud data is cached;
+    # the frontend refreshes periodically and streams new cards in.
+    cloud = fetch_cloud_state(blocking=False)
     local_ids = {m["id"] for m in methods}
-    for run, max_step in sorted(cloud["runs"].items()):
+    for run, info in sorted(cloud["runs"].items()):
         run_id = f"cloud_{run}"
         if run_id in local_ids:
             continue
@@ -142,6 +149,7 @@ def get_methods():
             "seedType": "cloud",
             "cloud": True,
             "vertex_state": state,
+            "updated": info.get("updated", ""),
         }
         if run in cloud["weights"]:
             entry["weights_url"] = f"{PUBLIC_BASE}{run}/weights.json"
@@ -210,8 +218,8 @@ def fetch_status_sync():
     # Cloud runs keyed by their public URL prefix, matching the 'dir' the
     # /api/methods endpoint hands to the frontend.
     cloud = fetch_cloud_state(blocking=False)
-    for run, max_step in cloud["runs"].items():
-        status[f"{PUBLIC_BASE}{run}/"] = max_step
+    for run, info in cloud["runs"].items():
+        status[f"{PUBLIC_BASE}{run}/"] = info["step"]
     return status
 
 async def status_generator():
