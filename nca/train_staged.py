@@ -111,7 +111,8 @@ def partial_np(tgt, ys, xs, frac):
 
 def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
           batch=16, pool_size=256, lr=2e-3, ca_min=48, ca_max=72,
-          gate=0.012, log_every=100, ckpt_every=500, snap_dir=None, rng_seed=0):
+          gate=0.012, replay_p=0.0, log_every=100, ckpt_every=500,
+          snap_dir=None, rng_seed=0):
     torch.manual_seed(sum(map(ord, text)) + 3)
     rng = np.random.default_rng(rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -147,13 +148,18 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
 
     meta = RunMeta(snap_dir, text, "nca.train_staged",
                    {"steps": steps, "glyph": glyph, "batch": batch, "lr": lr,
-                    "gate": gate, "rng_seed": rng_seed},
+                    "gate": gate, "replay_p": replay_p, "rng_seed": rng_seed},
                    channel_n, hidden_n, "staged", steps, device)
 
     recent = []
     t0 = time.time()
     for step in range(start_step, steps):
-        if stage == 1:
+        # Rehearse earlier stages so later ones don't overwrite them
+        # (the four-skill exam showed stage-4 training erased stage-1 growth).
+        active = stage
+        if replay_p > 0 and stage > 1 and rng.random() < replay_p:
+            active = int(rng.integers(1, stage))
+        if active == 1:
             idx = torch.randperm(pool_size, device=device)[:batch]
             x = pool[idx]
             with torch.no_grad():
@@ -162,7 +168,7 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
             x = x[rank]; idx = idx[rank]
             x[:1] = seed
             tgt_b = target
-        elif stage == 2:
+        elif active == 2:
             idx = torch.randperm(pool_size, device=device)[:batch]
             x = pool[idx].clone()
             k = float(rng.uniform(0.08, 0.35))
@@ -170,7 +176,7 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
             namp = float(rng.uniform(0.05, 0.30))
             x[:, :4] = x[:, :4] * (1 - namp) + torch.rand_like(x[:, :4]) * namp
             tgt_b = target
-        elif stage == 3:
+        elif active == 3:
             idx = torch.randperm(pool_size, device=device)[:batch]
             x = pool[idx].clone()
             x = holes(x, int(rng.integers(2, 5)), rng)
@@ -216,14 +222,15 @@ def train(text="COMP", steps=14000, glyph=12, channel_n=16, hidden_n=80,
                     p.grad /= (p.grad.norm() + 1e-8)
         opt.step()
         sched.step()
-        if stage == 1:
+        if active == 1:
             with torch.no_grad():
                 pool[idx] = x.detach()
 
-        recent.append(loss.item())
+        if active == stage:
+            recent.append(loss.item())
         if len(recent) > 50:
             recent.pop(0)
-        avg = sum(recent) / len(recent)
+        avg = sum(recent) / len(recent) if recent else float("inf")
         in_stage = step - stage_start
         if stage < 4 and ((len(recent) == 50 and avg < gate) or in_stage >= caps[stage]):
             print(f"=== stage {stage} done at step {step} (avg {avg:.4f}) ===", flush=True)
@@ -261,9 +268,10 @@ if __name__ == "__main__":
     p.add_argument("--text", default="COMP")
     p.add_argument("--steps", type=int, default=14000)
     p.add_argument("--gate", type=float, default=0.012)
+    p.add_argument("--replay-p", type=float, default=0.0)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
-    train(a.text, steps=a.steps, gate=a.gate, rng_seed=a.rng_seed,
-          log_every=a.log_every, snap_dir=a.snap_dir)
+    train(a.text, steps=a.steps, gate=a.gate, replay_p=a.replay_p,
+          rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
