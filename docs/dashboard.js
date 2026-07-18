@@ -11,7 +11,7 @@ let staticMode = false;
 // anonymously, so a static page needs no backend at all.
 const BUCKET = 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
-const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name),nextPageToken&maxResults=1000`;
+const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
 
 async function listCloudRuns(onPage) {
     const runs = {};
@@ -76,6 +76,7 @@ let sortKey = localStorage.getItem('dash_sort') || 'newest';
 
 function addOrUpdateCards(list) {
     let added = false;
+    let resort = false;
     list.forEach(m => {
         if (seenIds.has(m.id)) {
             const tr = cardTrackers.find(t => t.id === m.id);
@@ -84,7 +85,13 @@ function addOrUpdateCards(list) {
                 if (m.updated) tr.updated = m.updated;
             }
             const known = methods.find(x => x.id === m.id);
-            if (known && m.weights_url) known.weights_url = m.weights_url;
+            if (known) {
+                if (m.weights_url) known.weights_url = m.weights_url;
+                if (m.updated && m.updated !== known.updated) {
+                    known.updated = m.updated;   // keep sortCards()'s source fresh
+                    resort = true;
+                }
+            }
             return;
         }
         seenIds.add(m.id);
@@ -121,10 +128,8 @@ function addOrUpdateCards(list) {
             lastKnownStep: -100
         });
     });
-    if (added) {
-        sortCards();
-        initializeDropdown();
-    }
+    if (added || resort) sortCards();
+    if (added) initializeDropdown();
 }
 
 window.setSort = function(k) {
