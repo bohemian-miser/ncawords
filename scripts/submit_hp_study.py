@@ -14,7 +14,7 @@ PARALLEL = 6
 
 pkg = build_and_upload_package()
 
-spec = MACHINES["l4"]
+spec = MACHINES["t4"]
 trial_job_spec = {
     "worker_pool_specs": [{
         "machine_spec": {
