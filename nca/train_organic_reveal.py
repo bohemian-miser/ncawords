@@ -257,7 +257,8 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
           log_every=100, snap_dir=None, rng_seed=0, growth="bfs",
           rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None,
-          letter_w=8.0, adaptive=False, fester_p=0.0, cyclic=False):
+          letter_w=8.0, adaptive=False, fester_p=0.0, cyclic=False,
+          alpha_only=False):
     torch.manual_seed(sum(map(ord, text)) + 31)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}, cyclic {cyclic}, "
@@ -351,9 +352,16 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
         # masks is [B,1,H,W]; broadcasting against [B,3,H,W] is correct as-is.
         # (A stray .unsqueeze(1) here used to create a [B,B,3,H,W] cross-batch
         # outer product — silently garbage gradients since v1.)
-        loss_rgb = lw_eff * ((x[:, :3] - tgt_rgb) ** 2 * masks).sum() \
-            / (masks.sum() * 3 * batch + 1e-8)
-        loss = loss_a + loss_rgb
+        # alpha_only: supervise presence/activations only, leave RGB free to
+        # become whatever machinery the model wants (the standing color-free
+        # principle — see train_bloom / alpha_word).
+        if alpha_only:
+            loss = loss_a
+            loss_rgb = torch.zeros((), device=device)
+        else:
+            loss_rgb = lw_eff * ((x[:, :3] - tgt_rgb) ** 2 * masks).sum() \
+                / (masks.sum() * 3 * batch + 1e-8)
+            loss = loss_a + loss_rgb
 
         opt.zero_grad()
         loss.backward()
@@ -449,6 +457,8 @@ if __name__ == "__main__":
     p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--cyclic", action="store_true",
                    help="grow->dissolve->regrow breathing loop (mirrored frames)")
+    p.add_argument("--alpha-only", action="store_true",
+                   help="supervise activations only; RGB free (machinery)")
     p.add_argument("--ca-min", "--ca_min", type=int, default=8)
     p.add_argument("--ca-max", "--ca_max", type=int, default=16)
     p.add_argument("--preview", action="store_true",
@@ -464,5 +474,5 @@ if __name__ == "__main__":
               log_every=a.log_every, snap_dir=a.snap_dir, growth=a.growth,
               rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg,
               lifespan=a.lifespan, letter_w=a.letter_w, adaptive=a.adaptive,
-              fester_p=a.fester_p, cyclic=a.cyclic,
+              fester_p=a.fester_p, cyclic=a.cyclic, alpha_only=a.alpha_only,
               ca_min=a.ca_min, ca_max=a.ca_max)

@@ -36,6 +36,7 @@ from nca.train_staged import render_word_3_line, make_seed
 from nca.train_web_hidden import render_word_9_line, damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import fester
 
 
 def diffuse(field, iters):
@@ -74,11 +75,12 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
           batch=16, pool_size=256, lr=1e-3, ca_min=64, ca_max=96,
           scaffold="none", bloom=True, diffuse_iters=6, mist_alpha=0.15,
           bloom_noise=0.05, halo_lo=0.02, halo_hi=0.4, explore_frac=0.7,
-          void_w=4.0, warmup=2000, damage_p=0.3, rng_seed=0,
-          log_every=200, ckpt_every=500, snap_dir=None):
+          void_w=4.0, warmup=2000, damage_p=0.3, fire_rate=0.7, fester_p=0.0,
+          rng_seed=0, log_every=200, ckpt_every=500, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 23 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Training on device: {device}, scaffold {scaffold}, bloom {bloom}")
+    print(f"Training on device: {device}, scaffold {scaffold}, bloom {bloom}, "
+          f"fire {fire_rate}, fester {fester_p}")
 
     if scaffold == "3line":
         tgt_np = render_word_3_line(text, glyph)
@@ -94,6 +96,7 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
             .resize((w * 8, h * 8), Image.NEAREST).save(Path(snap_dir) / "target.png")
 
     model = NCA(channel_n, hidden_n=hidden_n).to(device)
+    model.fire_rate = fire_rate   # star-sweep winner (0.7); used by both paths
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.MultiStepLR(
         opt, milestones=[int(steps * 0.85)], gamma=0.1)
@@ -125,11 +128,15 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
             m = damage_mask_rect(2, h, w, device)
             x[-2:] = x[-2:] * m
 
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x,
+                       damage_fn=lambda z: z * damage_mask_rect(z.shape[0], h, w, device))
+
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         if bloom:
             x = bloom_rollout(model, x, n_ca, morph_ch, diffuse_iters,
                               mist_alpha, bloom_noise, halo_lo, halo_hi,
-                              explore_frac)
+                              explore_frac, fire_rate=fire_rate)
         else:
             x = model(x, steps=n_ca)
 
@@ -191,11 +198,14 @@ if __name__ == "__main__":
     p.add_argument("--mist-alpha", type=float, default=0.15)
     p.add_argument("--explore-frac", type=float, default=0.7)
     p.add_argument("--void-w", type=float, default=4.0)
+    p.add_argument("--fire-rate", "--fire_rate", type=float, default=0.7)
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--rng-seed", "--rng_seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(a.text, steps=a.steps, scaffold=a.scaffold, bloom=a.bloom,
           bloom_noise=a.bloom_noise, mist_alpha=a.mist_alpha,
-          explore_frac=a.explore_frac, void_w=a.void_w, rng_seed=a.rng_seed,
+          explore_frac=a.explore_frac, void_w=a.void_w,
+          fire_rate=a.fire_rate, fester_p=a.fester_p, rng_seed=a.rng_seed,
           log_every=a.log_every, snap_dir=a.snap_dir)
