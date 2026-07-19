@@ -145,7 +145,9 @@ def make_self_batch(model, word, ys, xs, rng, batch, channel_n, delta, device):
     _, h, w = word.shape
     with torch.no_grad():
         z = torch.rand(batch, channel_n, CANVAS, CANVAS, device=device)
-        z = model(z, steps=int(rng.integers(24, 64)))
+        # long horizons included: referee the model's own drifted states
+        # (position-consistent by construction, unlike festering scenes)
+        z = model(z, steps=int(rng.integers(24, 220)))
     tgts = np.zeros((batch, 4, CANVAS, CANVAS), np.float32)
     for i in range(batch):
         a = z[i, 3].clamp(0, 1).cpu().numpy()
@@ -226,8 +228,6 @@ def train(text="CO", steps=8000, glyph=14, channel_n=16, hidden_n=80,
             tgt = torch.from_numpy(np.stack(tgts)).to(device)
         x_start = x[:1].detach().clone()
 
-        if fester_p > 0 and torch.rand(1).item() < fester_p:
-            x = fester(model, x, min_steps=100, max_steps=400)
         if adaptive:
             x, _used = adaptive_rollout(model, x, tgt, chunk=6, max_chunks=8)
         else:
