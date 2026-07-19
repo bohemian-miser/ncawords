@@ -1921,5 +1921,108 @@
     "args": {
       "replay_p": 0.3
     }
+  },
+  {
+    "run": "hp-fire07",
+    "module": "nca.train_ladder_seed",
+    "text": "COMP",
+    "steps_completed": 8000,
+    "tags": [
+      "hp-sweep",
+      "fire-rate"
+    ],
+    "final_loss": 0.0204,
+    "min_loss": 0.0204,
+    "args": {
+      "fire_rate": 0.7
+    }
+  },
+  {
+    "run": "hp-star-summary",
+    "module": "nca.train_ladder_seed",
+    "text": "ANALYSIS",
+    "steps_completed": 0,
+    "tags": [
+      "hp-sweep",
+      "summary"
+    ],
+    "final_loss": 0.0258,
+    "min_loss": 0.0199,
+    "args": {
+      "baseline_config": "lr=2e-3, hid=80, ch=16, batch=32, fire=0.5, pool=256",
+      "winners": "lr=1e-3\u21920.0199; hidden=128\u21920.0199; fire=0.7\u21920.0204; batch=8\u21920.0222",
+      "losers": "lr=4e-3=NaN; hid48=0.0304; batch64=0.0309; pool64=0.0294; ch12=0.0279; ch24=0.0296; fire10=0.0289",
+      "insensitive": "ca32/ca128"
+    }
+  },
+  {
+    "run": "hp-combo",
+    "module": "nca.train_ladder_seed",
+    "text": "RUNNING",
+    "steps_completed": 8000,
+    "tags": [
+      "hp-sweep",
+      "combo"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "lr": 0.001,
+      "hidden": 128,
+      "fire_rate": 0.7,
+      "job_id": 3046117258750328832
+    }
+  },
+  {
+    "run": "alphaword-seed",
+    "module": "nca.train_alpha_word",
+    "text": "RUNNING",
+    "steps_completed": 12000,
+    "tags": [
+      "alpha-only"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "lr": 0.001,
+      "hidden": 128,
+      "job_id": 150443435839455232
+    }
+  },
+  {
+    "run": "alphaword-noise",
+    "module": "nca.train_alpha_word",
+    "text": "RUNNING",
+    "steps_completed": 12000,
+    "tags": [
+      "alpha-only",
+      "noise"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "lr": 0.001,
+      "hidden": 128,
+      "pool_init": "noise",
+      "job_id": 381424294527238144
+    }
+  },
+  {
+    "run": "hpstudy-ladder-seed",
+    "module": "nca.train_ladder_seed",
+    "text": "FAILED",
+    "steps_completed": 0,
+    "tags": [
+      "vizier",
+      "hp-study"
+    ],
+    "final_loss": 0.0233,
+    "min_loss": 0.0233,
+    "args": {
+      "best_trial": "lr=2.87e-3, hidden=81, fire=0.774, batch=16, pool=64",
+      "trials": 13,
+      "succeeded": 6,
+      "failure_reason": "max_failed_trial_count=10 via spot preemptions"
+    }
   }
 ]

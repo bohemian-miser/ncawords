@@ -36,6 +36,10 @@
 | base-plain-nca-16k-dmg | 0 | 0.0420 | 0.0395 | damage_occasional, normal_p=1.0 |
 | base-plain-nca-8k | 0 | 0.0420 | 0.0325 | normal_p=1.0 |
 | base-plain-nca-8k-dmg | 0 | 0.0420 | 0.0374 | damage_occasional, normal_p=1.0 |
+| hp-fire07 | 8000 | 0.0204 | 0.0204 | fire_rate=0.7 |
+| hpstudy-ladder-seed | 0 | 0.0233 | 0.0233 | vizier hp-study; best trial: lr=2.87e-3, hidden=81, fire=0.774, batch=16, pool=64 |
+| hp-star-summary | 0 | 0.0258 | 0.0199 | hp-sweep summary; baseline lr=2e-3 hid=80 ch=16 batch=32 fire=0.5 pool=256 |
+| hp-combo | 8000 | N/A | N/A | hp-sweep combination; lr=1e-3 + hidden=128 + fire=0.7 |
 
 ### nca.train_negotiate
 | Run | Steps | Final Loss | Min Loss | Notable Args |
@@ -191,3 +195,9 @@
 | base-hid-nca-noise-8k | 0 | 0.0444 | 0.0298 |  |
 | smoke-full-loop | 0 | 0.0471 | 0.0336 |  |
 | base-hid-nca-noise-16k | 0 | N/A | N/A |  |
+
+### nca.train_alpha_word
+| Run | Steps | Final Loss | Min Loss | Notable Args |
+|-----|-------|------------|----------|---------------|
+| alphaword-seed | 12000 | N/A | N/A | alpha-only; loss on alpha channel only; lr=1e-3, hidden=128 |
+| alphaword-noise | 12000 | N/A | N/A | alpha-only, noise; pool init from noise; lr=1e-3, hidden=128 |
