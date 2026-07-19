@@ -169,7 +169,8 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
     meta = RunMeta(snap_dir, text, "nca.train_slime",
                    {"steps": steps, "K": K, "batch": batch, "lr": lr,
                     "rng_seed": rng_seed, "pool_size": pool_size,
-                    "food_text": food_text, "food_w": food_w},
+                    "food_text": food_text, "food_w": food_w,
+                    "food_curriculum": food_curriculum, "cur_gate": cur_gate},
                    channel_n, hidden_n, "noise", steps, device)
 
     # food curriculum: begin with one food-world; admit another each time
