@@ -201,3 +201,25 @@
 |-----|-------|------------|----------|---------------|
 | alphaword-seed | 12000 | N/A | N/A | alpha-only; loss on alpha channel only; lr=1e-3, hidden=128 |
 | alphaword-noise | 12000 | N/A | N/A | alpha-only, noise; pool init from noise; lr=1e-3, hidden=128 |
+
+### nca.analysis
+
+#### crit-map-2026-07-19 (ANALYSIS)
+Criticality phase map: dynamics probes (JVP spectral radius, Benettin Lyapunov, fixed-point residual) over all 221 bucket checkpoints, at mid-growth (alive-rich) and settled states.
+
+**Dataset:** docs/crit_map.jsonl + gs://recipe-lanes-nca-jobs/analysis/crit_map_2026-07-19.jsonl
+
+**Key Findings:**
+- (a) Canonical ladder recipes sit near criticality (median rho 1.011) but BEST performers are slightly supercritical (rho 1.01-1.27, lyapunov marginally positive). Exactly-critical rho=1.000 + negative lyapunov marks underfit/collapsed models (base-plain-* at loss 0.042).
+- (b) hp-combo's anti-stacking failure explained: it landed subcritical (rho 0.958, lyap -0.025, over-damped).
+- (c) Family medians rise with objective exoticness: ladder 1.01, noise_ladder 1.03, alpha_word 1.02, staged 1.15, organic 1.18, slime 1.23, hilbert 1.39, spectre 1.51, collapsed spectre3 3.0+.
+- (d) Slime models are strongly chaotic (median lyapunov 0.61). Hypothesis: chaotic target dynamics conflict with pool training's pull to stability, explaining the multi-food floor.
+- (e) Mid-growth states are more supercritical than settled ones (growth is the expansive phase).
+- (f) Negotiate-family probes invalid (seed-start init vs scene-trained models — needs scene-based probing).
+
+### nca.train_slime (continued)
+| Run | Steps | Final Loss | Min Loss | Notable Args |
+|-----|-------|------------|----------|---------------|
+| spectre3-fill | 16000 | 0.1389 | N/A | Ring-curriculum fill variant collapsed like the free variant; spectre3 closed as negative result both render modes. Next: graph-substrate NCA. |
+| food-cur6 | 0 | N/A | N/A | Curriculum WAS active (submission args confirmed); manifest simply didn't log the flag (fixed in later commit). Negative result: curriculum admission does not solve multi-food slime (floor ~0.147). |
+| food-cur7 | 0 | INVALID | N/A | submitted without --food-w, defaulted 0; not a real replication |

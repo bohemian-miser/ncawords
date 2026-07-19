@@ -2024,5 +2024,66 @@
       "succeeded": 6,
       "failure_reason": "max_failed_trial_count=10 via spot preemptions"
     }
+  },
+  {
+    "run": "crit-map-2026-07-19",
+    "module": "nca.analysis",
+    "text": "ANALYSIS",
+    "steps_completed": 0,
+    "tags": [
+      "criticality",
+      "phase-map"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "dataset": "docs/crit_map.jsonl + gs://recipe-lanes-nca-jobs/analysis/crit_map_2026-07-19.jsonl",
+      "description": "Criticality phase map: dynamics probes (JVP spectral radius, Benettin Lyapunov, fixed-point residual) over all 221 bucket checkpoints, at mid-growth (alive-rich) and settled states. Findings: (a) canonical ladder recipes sit near criticality (median rho 1.011) but BEST performers are slightly supercritical (rho 1.01-1.27, lyapunov marginally positive) while exactly-critical rho=1.000 + negative lyapunov marks underfit/collapsed models (base-plain-* at loss 0.042); (b) hp-combo's anti-stacking failure explained: it landed subcritical (rho 0.958, lyap -0.025, over-damped); (c) family medians rise with objective exoticness: ladder 1.01, noise_ladder 1.03, alpha_word 1.02, staged 1.15, organic 1.18, slime 1.23, hilbert 1.39, spectre 1.51, collapsed spectre3 3.0+; (d) slime models are strongly chaotic (median lyapunov 0.61) \u2014 hypothesis: chaotic target dynamics conflict with pool training's pull to stability, explaining the multi-food floor; (e) mid-growth states are more supercritical than settled ones (growth is the expansive phase); (f) negotiate-family probes invalid (seed-start init vs scene-trained models \u2014 needs scene-based probing)."
+    }
+  },
+  {
+    "run": "spectre3-fill",
+    "module": "nca.train_slime",
+    "text": "COMPLETE",
+    "steps_completed": 16000,
+    "tags": [
+      "spectre3",
+      "ring-curriculum"
+    ],
+    "final_loss": 0.1389,
+    "min_loss": null,
+    "args": {
+      "description": "Ring-curriculum fill variant collapsed like the free variant; spectre3 closed as negative result both render modes. Next: graph-substrate NCA."
+    }
+  },
+  {
+    "run": "food-cur6",
+    "module": "nca.train_slime",
+    "text": "COMPLETE",
+    "steps_completed": 0,
+    "tags": [
+      "food",
+      "curriculum"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "note": "Curriculum WAS active (submission args confirmed); manifest simply didn't log the flag (fixed in later commit). Negative result: curriculum admission does not solve multi-food slime (floor ~0.147)."
+    }
+  },
+  {
+    "run": "food-cur7",
+    "module": "nca.train_slime",
+    "text": "INVALID",
+    "steps_completed": 0,
+    "tags": [
+      "food",
+      "curriculum"
+    ],
+    "final_loss": null,
+    "min_loss": null,
+    "args": {
+      "reason": "submitted without --food-w, defaulted 0; not a real replication"
+    }
   }
 ]
