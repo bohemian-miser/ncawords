@@ -119,6 +119,7 @@ def make_state_from_frame(frame, channel_n, device, hidden_noise=0.1, rng=None,
 
 def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
+          food_curriculum=False, cur_gate=0.03,
           log_every=100, snap_dir=None, rng_seed=0, sim_kwargs=None,
           food_text=None, food_w=0.0):
     torch.manual_seed(1337)
@@ -171,9 +172,18 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
                     "food_text": food_text, "food_w": food_w},
                    channel_n, hidden_n, "noise", steps, device)
 
+    # food curriculum: begin with one food-world; admit another each time
+    # the moving-average loss beats the gate (cold-starting all worlds at
+    # once collapsed to the kill-everything optimum).
+    active_foods = 1 if food_curriculum else len(frame_sets)
+    recent = []
     t0 = time.time()
     for step in range(start_step, steps):
-        idx = torch.randperm(pool_size)[:batch]
+        if food_curriculum:
+            allowed = torch.nonzero(pool_f < active_foods).squeeze(1)
+        else:
+            allowed = torch.arange(pool_size)
+        idx = allowed[torch.randperm(len(allowed))[:batch]]
         x = pool[idx].clone()
         ks = pool_k[idx]
 
@@ -194,6 +204,15 @@ def train(text="SLIME", steps=8000, K=120, channel_n=16, hidden_n=80,
         opt.step()
         sched.step()
 
+        if food_curriculum:
+            recent.append(loss.item())
+            if len(recent) > 50:
+                recent.pop(0)
+            if len(recent) == 50 and sum(recent)/50 < cur_gate \
+                    and active_foods < len(frame_sets):
+                active_foods += 1
+                recent.clear()
+                print(f"=== curriculum: now {active_foods} food-worlds ===", flush=True)
         with torch.no_grad():
             pool[idx] = x.detach()
             for j, i in enumerate(idx):
@@ -249,6 +268,7 @@ if __name__ == "__main__":
     p.add_argument("--substeps", type=int, default=3)
     p.add_argument("--food-text", default=None)
     p.add_argument("--food-w", type=float, default=0.0)
+    p.add_argument("--food-curriculum", action="store_true")
     p.add_argument("--preview", action="store_true")
     a = p.parse_args()
 
@@ -259,5 +279,6 @@ if __name__ == "__main__":
                         K=a.frames, rng_seed=a.rng_seed)
     else:
         train(a.text, steps=a.steps, K=a.frames, rng_seed=a.rng_seed,
+              food_curriculum=a.food_curriculum,
               log_every=a.log_every, snap_dir=a.snap_dir, sim_kwargs=sim,
               food_text=a.food_text, food_w=a.food_w)
