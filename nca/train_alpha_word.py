@@ -80,7 +80,7 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
             x[-2:] = x[-2:] * m
         if fester_p > 0 and torch.rand(1).item() < fester_p:
             x = fester(model, x,
-                       damage_fn=lambda z: z * damage_mask_rect(2, h, w, device))
+                       damage_fn=lambda z: z * damage_mask_rect(z.shape[0], h, w, device))
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
