@@ -257,13 +257,24 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
           batch=8, pool_size=64, lr=2e-3, ca_min=8, ca_max=16,
           log_every=100, snap_dir=None, rng_seed=0, growth="bfs",
           rot_mode="aug90", rot_at=1000, rot_deg=20.0, lifespan=None,
-          letter_w=8.0, adaptive=False, fester_p=0.0):
+          letter_w=8.0, adaptive=False, fester_p=0.0, cyclic=False):
     torch.manual_seed(sum(map(ord, text)) + 31)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Training on device: {device}")
+    print(f"Training on device: {device}, cyclic {cyclic}, "
+          f"ca {ca_min}-{ca_max}/frame")
 
     rgb_np, a_np, mask_np = grow_frames(text, K, glyph, rng_seed, growth=growth,
                                         lifespan=lifespan)
+    if cyclic:
+        # Mirror the grow sequence into grow->hold->dissolve so the target
+        # trajectory loops: frame 0 (seed) ... K-1 (full word) ... back to
+        # near-seed, then wraps to 0. The dissolve is the reverse of growth,
+        # exactly as learnable, and the wrap transition is trained (state is
+        # carried across it) so the model re-nucleates on its own — a
+        # self-looping breather rather than a one-shot reveal.
+        mirror = list(range(K)) + list(range(K - 2, 0, -1))
+        rgb_np, a_np = rgb_np[mirror], a_np[mirror]
+        K = len(mirror)   # K_eff = 2K-2
     rgb_f = torch.from_numpy(rgb_np).to(device)      # [K,3,H,W]
     a_f = torch.from_numpy(a_np).to(device)          # [K,1,H,W]
     rgb_mask = torch.from_numpy(mask_np).to(device)  # [1,H,W]
@@ -313,10 +324,12 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
             src_rgb, src_a, src_mask = rgb_rot, a_rot, mask_rot
         else:
             src_rgb, src_a, src_mask = rgb_f, a_f, rgb_mask
-        tgt_rgb = torch.stack([torch.rot90(src_rgb[min(k + 1, K - 1)], r.item(), (1, 2))
-                               for k, r in zip(ks, rots)])
-        tgt_a = torch.stack([torch.rot90(src_a[min(k + 1, K - 1)], r.item(), (1, 2))
-                             for k, r in zip(ks, rots)])
+        nxt = [(k.item() + 1) % K if cyclic else min(k.item() + 1, K - 1)
+               for k in ks]
+        tgt_rgb = torch.stack([torch.rot90(src_rgb[n], r.item(), (1, 2))
+                               for n, r in zip(nxt, rots)])
+        tgt_a = torch.stack([torch.rot90(src_a[n], r.item(), (1, 2))
+                             for n, r in zip(nxt, rots)])
         masks = torch.stack([torch.rot90(src_mask, r.item(), (1, 2)) for r in rots])
 
         if fester_p > 0 and torch.rand(1).item() < fester_p:
@@ -354,7 +367,16 @@ def train(text, steps=8000, K=60, glyph=12, channel_n=16, hidden_n=80,
         with torch.no_grad():
             pool[idx] = x.detach()
             for j, i in enumerate(idx):
-                if ks[j] + 1 >= K - 1:   # trajectory done: restart it
+                if cyclic:
+                    # wrap and CARRY the state so the model learns the
+                    # dissolve->re-nucleate transition; occasionally re-anchor
+                    # to a clean seed to stop pool drift accumulating.
+                    pool_k[i] = (ks[j] + 1) % K
+                    if pool_k[i] == 0 and torch.rand(1).item() < 0.3:
+                        pool[i] = make_seed_state(channel_n, device)
+                        if rot_mode == "aug90":
+                            pool_rot[i] = torch.randint(0, 4, (1,))
+                elif ks[j] + 1 >= K - 1:   # trajectory done: restart it
                     pool[i] = make_seed_state(channel_n, device)
                     pool_k[i] = 0
                     if rot_mode == "aug90":
@@ -425,6 +447,10 @@ if __name__ == "__main__":
                    help="Loss upweight on letter pixels")
     p.add_argument("--adaptive", action="store_true")
     p.add_argument("--fester-p", type=float, default=0.0)
+    p.add_argument("--cyclic", action="store_true",
+                   help="grow->dissolve->regrow breathing loop (mirrored frames)")
+    p.add_argument("--ca-min", "--ca_min", type=int, default=8)
+    p.add_argument("--ca-max", "--ca_max", type=int, default=16)
     p.add_argument("--preview", action="store_true",
                    help="Only generate proposed TARGET frames, no training")
     a = p.parse_args()
@@ -438,4 +464,5 @@ if __name__ == "__main__":
               log_every=a.log_every, snap_dir=a.snap_dir, growth=a.growth,
               rot_mode=a.rot_mode, rot_at=a.rot_at, rot_deg=a.rot_deg,
               lifespan=a.lifespan, letter_w=a.letter_w, adaptive=a.adaptive,
-              fester_p=a.fester_p)
+              fester_p=a.fester_p, cyclic=a.cyclic,
+              ca_min=a.ca_min, ca_max=a.ca_max)
