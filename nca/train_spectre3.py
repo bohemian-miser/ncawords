@@ -115,7 +115,18 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=192,
             x = model(x, steps=n_ca)
 
         em = torch.from_numpy(edge_m).to(device)
-        if render == "free":
+        if render == "outline":
+            # Alpha/activation only, outline only, insides free: supervise
+            # alpha=1 on the edge skeleton and alpha=0 on the exterior (so the
+            # tiling stays contained), leave interior alpha AND all RGB free.
+            im_ = torch.from_numpy(inter_m).to(device)
+            sup = (em | (~em & ~im_))[None, None].float()   # edge + exterior
+            ta = target[:, 3:4]
+            loss = (EDGE_W * ((x[:, 3:4] - ta) ** 2 * em[None, None]).sum()
+                    / (em.sum() * batch + 1e-8)
+                    + ((x[:, 3:4] - ta) ** 2 * (sup * (1 - em[None, None].float())))
+                    .sum() / ((~em & ~im_).sum() * batch + 1e-8))
+        elif render == "free":
             im_ = torch.from_numpy(inter_m).to(device)
             loss = F.mse_loss(x[:, 3:4], target[:, 3:4])
             loss = loss + EDGE_W * ((x[:, :3] - 0.08) ** 2 * em[None, None]).sum() \
@@ -179,10 +190,12 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=192,
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--steps", type=int, default=16000)
-    p.add_argument("--render", default="fill", choices=["fill", "free"])
+    p.add_argument("--render", default="fill", choices=["fill", "free", "outline"])
     p.add_argument("--gate", type=float, default=0.01)
+    p.add_argument("--no-adaptive", dest="adaptive", action="store_false")
+    p.add_argument("--fester-p", type=float, default=0.25)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
-    train(steps=a.steps, render=a.render, gate=a.gate,
-          log_every=a.log_every, snap_dir=a.snap_dir)
+    train(steps=a.steps, render=a.render, gate=a.gate, adaptive=a.adaptive,
+          fester_p=a.fester_p, log_every=a.log_every, snap_dir=a.snap_dir)
