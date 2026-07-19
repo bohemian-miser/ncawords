@@ -95,7 +95,7 @@ def train(order=3, steps=12000, canvas=None, channel_n=16, hidden_n=96,
 
         if fester_p > 0 and torch.rand(1).item() < fester_p:
             x = fester(model, x,
-                       damage_fn=lambda z: z * damage_mask_rect(2, canvas, canvas, device))
+                       damage_fn=lambda z: z * damage_mask_rect(z.shape[0], canvas, canvas, device))
         x_start = x[-1:].detach().clone()
         if adaptive:
             x, _u = adaptive_rollout(model, x, target, chunk=12, max_chunks=8)

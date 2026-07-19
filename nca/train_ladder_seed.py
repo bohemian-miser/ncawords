@@ -94,7 +94,7 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
 
         if fester_p > 0 and torch.rand(1).item() < fester_p:
             x = fester(model, x,
-                       damage_fn=lambda z: z * damage_mask_rect(2, h, w, device))
+                       damage_fn=lambda z: z * damage_mask_rect(z.shape[0], h, w, device))
         x_start = x[-1:].detach().clone()   # damaged-most input state for snapshots
         if adaptive:
             x, _used = adaptive_rollout(model, x, target, chunk=12, max_chunks=8)
