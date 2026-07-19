@@ -38,8 +38,8 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
           batch=32, pool_size=256, lr=2e-3, ca_min=64, ca_max=96, fire_rate=0.5,
           normal_p=0.25, damage_occasional=False, damage_p=0.3,
           rho_target=0.0, rho_w=0.0, adaptive=False, fester_p=0.0,
-          log_every=100, ckpt_every=500, snap_dir=None):
-    torch.manual_seed(sum(map(ord, text)) + 55)
+          rng_seed=0, log_every=100, ckpt_every=500, snap_dir=None):
+    torch.manual_seed(sum(map(ord, text)) + 55 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}")
 
@@ -179,6 +179,7 @@ if __name__ == "__main__":
     p.add_argument("--ca-min", "--ca_min", type=int, default=64)
     p.add_argument("--ca-max", "--ca_max", type=int, default=96)
     p.add_argument("--fire-rate", "--fire_rate", type=float, default=0.5)
+    p.add_argument("--rng-seed", "--rng_seed", type=int, default=0)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
 
@@ -188,4 +189,4 @@ if __name__ == "__main__":
           lr=a.lr, hidden_n=a.hidden_n,
           channel_n=a.channel_n, batch=a.batch, pool_size=a.pool_size,
           ca_min=a.ca_min, ca_max=a.ca_max, fire_rate=a.fire_rate,
-          snap_dir=a.snap_dir)
+          rng_seed=a.rng_seed, snap_dir=a.snap_dir)
