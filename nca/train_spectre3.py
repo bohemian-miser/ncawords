@@ -116,16 +116,24 @@ def train(steps=16000, channel_n=16, hidden_n=96, batch=12, pool_size=192,
 
         em = torch.from_numpy(edge_m).to(device)
         if render == "outline":
-            # Alpha/activation only, outline only, insides free: supervise
-            # alpha=1 on the edge skeleton and alpha=0 on the exterior (so the
-            # tiling stays contained), leave interior alpha AND all RGB free.
+            # Alpha/activation only, outline emphasised, insides free (colour).
+            # Dense alpha target so growth is stable (every region anchored):
+            #   edges     -> alpha 1   (the skeleton, weighted EDGE_W)
+            #   interiors -> alpha 0.3 (a valley: alive enough to keep a growth
+            #                path, but well below the edge ridges so the tiling
+            #                lines stand out; only a soft anchor, so the inside
+            #                is otherwise free)
+            #   exterior  -> alpha 0   (containment)
+            # No RGB term anywhere: colour/machinery inside is entirely free.
             im_ = torch.from_numpy(inter_m).to(device)
-            sup = (em | (~em & ~im_))[None, None].float()   # edge + exterior
-            ta = target[:, 3:4]
-            loss = (EDGE_W * ((x[:, 3:4] - ta) ** 2 * em[None, None]).sum()
-                    / (em.sum() * batch + 1e-8)
-                    + ((x[:, 3:4] - ta) ** 2 * (sup * (1 - em[None, None].float())))
-                    .sum() / ((~em & ~im_).sum() * batch + 1e-8))
+            ext = (~em & ~im_)
+            a = x[:, 3:4]
+            edge_t = EDGE_W * ((a - 1.0) ** 2 * em[None, None]).sum() \
+                / (em.sum() * batch + 1e-8)
+            int_t = 0.5 * ((a - 0.3) ** 2 * im_[None, None]).sum() \
+                / (im_.sum() * batch + 1e-8)
+            ext_t = (a ** 2 * ext[None, None]).sum() / (ext.sum() * batch + 1e-8)
+            loss = edge_t + int_t + ext_t
         elif render == "free":
             im_ = torch.from_numpy(inter_m).to(device)
             loss = F.mse_loss(x[:, 3:4], target[:, 3:4])
