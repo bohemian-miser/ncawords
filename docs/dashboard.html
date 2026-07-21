@@ -32,9 +32,19 @@
         <span id="speed-val">1</span>
     </div>
     
+    <div style="display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:15px;">
+        <label>Display channels R/G/B:</label>
+        <select id="rgb-r" style="padding:4px; background:#111; color:#f66; border:1px solid #444; border-radius:4px;"></select>
+        <select id="rgb-g" style="padding:4px; background:#111; color:#6f6; border:1px solid #444; border-radius:4px;"></select>
+        <select id="rgb-b" style="padding:4px; background:#111; color:#66f; border:1px solid #444; border-radius:4px;"></select>
+        <button id="chan-grid-btn" onclick="toggleChannelGrid()" style="padding:6px 15px; margin-left:10px; background:#444; color:#fff; border:none; border-radius:4px; font-weight:bold; cursor:pointer;">Channel grid</button>
+    </div>
+
     <div style="display:inline-block; position:relative; background:#000; border: 2px solid #444; border-radius:4px;">
         <canvas id="nca-canvas" width="600" height="200" onmousedown="startDamage(event)" onmousemove="doDamage(event)" onmouseup="stopDamage(event)" onmouseleave="stopDamage(event)" style="cursor:crosshair;"></canvas>
     </div>
+
+    <div id="channel-grid" style="display:none; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:15px; padding:10px; background:#111; border-radius:4px;"></div>
 </div>
 
 <!-- Filter Controls -->
@@ -74,8 +84,8 @@
    </div>
 </div>
 
-<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=1c9f0c9</div>
-<script src="dashboard.js?v=1c9f0c9"></script>
-<script type="module" src="nca_viewer.js?v=1c9f0c9"></script>
+<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=08dc58a</div>
+<script src="dashboard.js?v=08dc58a"></script>
+<script type="module" src="nca_viewer.js?v=08dc58a"></script>
 </body>
 </html>
