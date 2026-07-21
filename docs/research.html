@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A running log of experiments beyond the original text-growing NCA models — dynamics analysis, emergent machinery, and learning cellular-automata rules.">
+<title>NCA Research Log</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* research-log-only scaffolding, layered on top of style.css */
+  .rl-table-wrap { overflow-x: auto; margin: 0 0 1.1rem; }
+  table.rl-table {
+    border-collapse: collapse;
+    width: 100%;
+    max-width: 30em;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.86rem;
+  }
+  table.rl-table th, table.rl-table td {
+    text-align: left;
+    padding: 0.42rem 0.8rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  table.rl-table th {
+    color: var(--text-faint);
+    font-weight: 600;
+    font-size: 0.76rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  table.rl-table td { font-variant-numeric: tabular-nums; }
+  .rl-img-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    justify-content: center;
+  }
+  .rl-img-row figure { flex: 1 1 220px; max-width: 320px; }
+  .rl-img-row img, .rl-shot img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid var(--cell-border);
+    background: var(--cell-bg);
+  }
+  .rl-cap {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin: 0.5rem 0 0;
+  }
+  .rl-status {
+    display: inline-block;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 999px;
+    padding: 0.15rem 0.65rem;
+    margin-left: 0.6rem;
+    vertical-align: middle;
+  }
+  .rl-footer-nav {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sitenav" aria-label="Site">
+  <a href="index.html">Article</a>
+  <a href="dashboard.html">Experiment gallery</a>
+  <a href="research.html" aria-current="page">Research log</a>
+</nav>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Research log</p>
+    <h1>NCA Research Log</h1>
+    <p class="subtitle">
+      A running log of experiments beyond the original text-growing models
+      &mdash; dynamics analysis, emergent machinery, and learning
+      cellular-automata rules.
+    </p>
+  </div>
+</header>
+
+<main class="article-column">
+
+<!-- ==================== 1. CRITICALITY ==================== -->
+<section>
+  <h2>Criticality is a training attractor</h2>
+  <p>
+    We probed 221 trained models with a spectral-radius + Lyapunov battery.
+    Canonical growth models sit right at criticality (spectral radius
+    &asymp; 1.0), but the <strong>best</strong> performers are slightly
+    supercritical (1.01&ndash;1.27) while collapsed or underfit models sit
+    exactly at 1.000.
+  </p>
+  <p>
+    Objective &ldquo;exoticness&rdquo; tracks it: simple letter-growth models
+    cluster around 1.01, staged models around 1.15, organic models around
+    1.18, and slime models around 1.23 (and strongly chaotic), rising to 1.39
+    for Hilbert curves and 1.51 for Spectre tilings.
+  </p>
+  <div class="rl-table-wrap">
+    <table class="rl-table">
+      <thead>
+        <tr><th>Family</th><th>Spectral radius</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Simple letter-growth</td><td>&asymp; 1.01</td></tr>
+        <tr><td>Staged</td><td>&asymp; 1.15</td></tr>
+        <tr><td>Organic</td><td>&asymp; 1.18</td></tr>
+        <tr><td>Slime</td><td>&asymp; 1.23 (strongly chaotic)</td></tr>
+        <tr><td>Hilbert curves</td><td>&asymp; 1.39</td></tr>
+        <tr><td>Spectre tilings</td><td>&asymp; 1.51</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ==================== 2. FIRE RATE ==================== -->
+<section>
+  <h2>A tuned fire-rate optimum</h2>
+  <p>
+    Cells update stochastically; the field&rsquo;s default is a 50% fire
+    rate per step. A sweep found a shallow but real optimum around
+    0.70&ndash;0.75 (loss &asymp; 0.0226, versus &asymp; 0.026 at the
+    extremes of the sweep).
+  </p>
+  <p>
+    The spectral radius stayed pinned near 1.0 across every rate tested
+    &mdash; so the optimum is independent of criticality.
+  </p>
+  <div class="rl-table-wrap">
+    <table class="rl-table">
+      <thead>
+        <tr><th>Fire rate</th><th>Loss</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>0.55</td><td>0.0265</td></tr>
+        <tr><td>0.60</td><td>0.0246</td></tr>
+        <tr><td>0.65</td><td>0.0296</td></tr>
+        <tr><td>0.70</td><td>0.0228</td></tr>
+        <tr><td>0.75</td><td>0.0226</td></tr>
+        <tr><td>0.80</td><td>0.0239</td></tr>
+        <tr><td>0.90</td><td>0.0257</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ==================== 3. SUCCESS CLOUD ==================== -->
+<section>
+  <h2>Emergent self-scaffolding (the success cloud)</h2>
+  <p>
+    Letters normally need a pre-drawn scaffold to grow in the right places;
+    without one, growth collapses to a single letter. We gave formed letters
+    a diffusing &ldquo;success cloud&rdquo; that neighbors read as a
+    positional signal, plus a thin living mist so the cloud survives in
+    empty space.
+  </p>
+  <p>
+    With it, the word COMP grows fully from a bare seed with no scaffold at
+    all.
+  </p>
+</section>
+
+<div class="figure-column">
+  <figure>
+    <p class="figure-title">Control vs. success cloud</p>
+    <div class="rl-img-row">
+      <figure>
+        <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/bloom-ctrl/COMP_11999.png" alt="Control run: growth collapses to MP instead of the full word COMP">
+        <p class="rl-cap">Control &mdash; no scaffold, no cloud: collapses to &ldquo;MP&rdquo;.</p>
+      </figure>
+      <figure>
+        <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/bloom-cloud/COMP_11999.png" alt="With success cloud: the full word COMP grows from a bare seed">
+        <p class="rl-cap">With success cloud: full &ldquo;COMP&rdquo; from a bare seed.</p>
+      </figure>
+      <figure>
+        <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/bloom-cloud/CLOUD_11999.png" alt="The diffusing success-cloud field itself, shown separately">
+        <p class="rl-cap">The cloud field itself &mdash; the diffusing positional signal.</p>
+      </figure>
+    </div>
+    <figcaption>
+      <b>Self-scaffolding.</b> The cloud is not part of the target image; it
+      is an internal signal the model invents and reads back to coordinate
+      where growth should happen.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ==================== 4. COLOUR-FREE ==================== -->
+<section>
+  <h2>Colour-free training invents its own palette</h2>
+  <p>
+    Supervising only the alpha/activation channel and leaving RGB completely
+    free, the model still invents structured, per-letter colouring as a
+    byproduct of its internal coordination &mdash; nothing in the loss asks
+    for colour at all.
+  </p>
+</section>
+
+<div class="figure-column">
+  <figure class="rl-shot">
+    <p class="figure-title">Colour as a byproduct</p>
+    <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/alphaword-noise3/COMP_11999.png" alt="COMP grown with RGB channels left completely unsupervised, showing structured per-letter colouring emerging on its own">
+    <figcaption>
+      <b>Unsupervised RGB.</b> Only alpha was ever in the loss; the colours
+      are the model&rsquo;s own emergent bookkeeping.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ==================== 5. GAME OF LIFE ==================== -->
+<section>
+  <h2>Learning the rules of Conway&rsquo;s Game of Life</h2>
+  <p>
+    Toward &ldquo;fixed rules, trained machinery&rdquo;: a neural CA can
+    learn Life exactly, but only with the right perception. A neighbour-count
+    (sum) filter reaches near-perfect prediction (cross-entropy 0.0003),
+    while the standard Sobel-gradient perception fails completely (0.52)
+    &mdash; you cannot recover a neighbour count from directional gradients.
+  </p>
+</section>
+
+<div class="figure-column">
+  <figure>
+    <p class="figure-title">Sum vs. Sobel perception</p>
+    <div class="rl-img-row">
+      <figure>
+        <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/gol-sum/GOL_09999.png" alt="Filmstrip: sum-perception network prediction (top row) matches true Game of Life (bottom row)">
+        <p class="rl-cap">Sum perception &mdash; matches true Life (top: prediction, bottom: truth). Cross-entropy 0.0003.</p>
+      </figure>
+      <figure>
+        <img src="https://storage.googleapis.com/recipe-lanes-nca-jobs/gol-sobel/GOL_09999.png" alt="Filmstrip: Sobel-perception network prediction (top row) fails against true Game of Life (bottom row); the glider dies">
+        <p class="rl-cap">Sobel perception &mdash; the glider dies. Cross-entropy 0.52.</p>
+      </figure>
+    </div>
+    <figcaption>
+      <b>Filmstrips.</b> Top row is the network&rsquo;s prediction, bottom
+      row is true Life, advancing left to right.
+    </figcaption>
+  </figure>
+</div>
+
+<!-- ==================== 6. FROZEN RULES ==================== -->
+<section>
+  <h2>Experiment 2: machinery inside frozen rules <span class="rl-status">In progress</span></h2>
+  <p>
+    With Life learned, we freeze the physics and instead train an initial
+    board so that a masked target behaviour emerges &mdash; the free cells
+    become whatever machinery is needed to make it happen.
+  </p>
+  <p>
+    Key obstacle found: a faithful rule-learner is too saturated to
+    backprop through, and naive optimisation is caught between a flat
+    zero-gradient empty board and chaotic soup. A temperature-annealed
+    soft-Life plus a horizon curriculum makes it trainable &mdash; a
+    still-life sanity target already reaches a perfect match under real
+    Life. Results still landing.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <div class="article-column rl-footer-nav">
+    <a href="index.html">&larr; Article</a>
+    <a href="dashboard.html">Experiment gallery &rarr;</a>
+  </div>
+</footer>
+
+</body>
+</html>
