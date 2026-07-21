@@ -66,7 +66,8 @@ window.loadInteractiveModel = async function() {
         unit.w = cw;
         unit.h = ch;
         unit.imgData = ctx.createImageData(cw, ch);
-        
+        populateChannelSelectors(ca.channel_n);
+
         // Set canvas visual size. Actual resolution is cw, ch.
         canvas.width = cw;
         canvas.height = ch;
@@ -84,16 +85,123 @@ window.loadInteractiveModel = async function() {
     }
 };
 
+// R/G/B channel-select dropdowns: populated 0..channel_n-1, default 0/1/2.
+function populateChannelSelectors(n) {
+    const ids = ['rgb-r', 'rgb-g', 'rgb-b'];
+    const defaults = [0, 1, 2];
+    ids.forEach((id, idx) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = '';
+        for (let c = 0; c < n; c++) {
+            const opt = document.createElement('option');
+            opt.value = String(c);
+            opt.textContent = String(c);
+            sel.appendChild(opt);
+        }
+        sel.value = String(Math.min(defaults[idx], n - 1));
+        sel.onchange = drawCA;
+    });
+}
+
+function selectedChannels() {
+    const rSel = document.getElementById('rgb-r');
+    const gSel = document.getElementById('rgb-g');
+    const bSel = document.getElementById('rgb-b');
+    return {
+        r: rSel && rSel.value !== '' ? parseInt(rSel.value, 10) : 0,
+        g: gSel && gSel.value !== '' ? parseInt(gSel.value, 10) : 1,
+        b: bSel && bSel.value !== '' ? parseInt(bSel.value, 10) : 2,
+    };
+}
+
 function drawCA() {
     if(!unit || !unit.ca) return;
-    if (unit.mode === 'gl' && typeof unit.ca.drawTo === 'function') {
+    const { r: rC, g: gC, b: bC } = selectedChannels();
+    const isDefault = rC === 0 && gC === 1 && bC === 2;
+
+    if (!isDefault && typeof unit.ca.readChannelsRGB === 'function') {
+        const out = unit.ca.readChannelsRGB(rC, gC, bC, unit.imgData.data);
+        if (out && out !== unit.imgData.data) unit.imgData.data.set(out);
+        ctx.putImageData(unit.imgData, 0, 0);
+    } else if (unit.mode === 'gl' && typeof unit.ca.drawTo === 'function') {
         unit.ca.drawTo(ctx);
     } else {
         const out = unit.ca.readRGBA(unit.imgData.data);
         if (out && out !== unit.imgData.data) unit.imgData.data.set(out);
         ctx.putImageData(unit.imgData, 0, 0);
     }
+
+    updateChannelGridIfVisible();
 }
+
+// Per-channel grayscale heatmap grid (all channels 0..channel_n-1).
+function isChannelGridVisible() {
+    const grid = document.getElementById('channel-grid');
+    return !!grid && grid.style.display !== 'none' && grid.style.display !== '';
+}
+
+function updateChannelGridIfVisible() {
+    if (isChannelGridVisible()) updateChannelGrid();
+}
+
+function updateChannelGrid() {
+    if (!unit || !unit.ca || typeof unit.ca.readChannel !== 'function') return;
+    const grid = document.getElementById('channel-grid');
+    if (!grid) return;
+    const n = unit.ca.channel_n;
+    const w = unit.w, h = unit.h;
+
+    if (grid.children.length !== n) {
+        grid.innerHTML = '';
+        for (let c = 0; c < n; c++) {
+            const wrap = document.createElement('div');
+            wrap.style.textAlign = 'center';
+            const cv = document.createElement('canvas');
+            cv.width = w;
+            cv.height = h;
+            cv.style.width = (w * 2) + 'px';
+            cv.style.height = (h * 2) + 'px';
+            cv.style.imageRendering = 'pixelated';
+            cv.style.border = '1px solid #333';
+            const label = document.createElement('div');
+            label.textContent = 'ch ' + c;
+            label.style.color = '#aaa';
+            label.style.fontSize = '11px';
+            wrap.appendChild(cv);
+            wrap.appendChild(label);
+            grid.appendChild(wrap);
+        }
+    }
+
+    for (let c = 0; c < n; c++) {
+        const cv = grid.children[c].firstChild;
+        const cctx = cv.getContext('2d');
+        const vals = unit.ca.readChannel(c);
+        const img = cctx.createImageData(w, h);
+        for (let i = 0; i < vals.length; i++) {
+            let v = vals[i];
+            if (v < 0) v = 0; else if (v > 1) v = 1;
+            const g = v * 255;
+            img.data[i * 4 + 0] = g;
+            img.data[i * 4 + 1] = g;
+            img.data[i * 4 + 2] = g;
+            img.data[i * 4 + 3] = 255;
+        }
+        cctx.putImageData(img, 0, 0);
+    }
+}
+
+window.toggleChannelGrid = function() {
+    const grid = document.getElementById('channel-grid');
+    if (!grid) return;
+    if (isChannelGridVisible()) {
+        grid.style.display = 'none';
+    } else {
+        grid.style.display = 'flex';
+        updateChannelGrid();
+    }
+};
 
 window.resetInteractive = function() {
     if(unit && unit.ca) {

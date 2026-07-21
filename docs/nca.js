@@ -300,6 +300,27 @@ export class CPUCA {
   readRGBA(out) {
     return rgbaFromState(this._buf, this._C, this._plane, out);
   }
+
+  // Raw values of channel c, length _plane. No copy semantics guaranteed
+  // beyond "safe to read"; callers must not mutate the returned array.
+  readChannel(c) {
+    const plane = this._plane;
+    return this._buf.slice(c * plane, (c + 1) * plane);
+  }
+
+  // Maps three named channels to R,G,B (value*255, clamped 0-255), alpha 255.
+  readChannelsRGB(rC, gC, bC, out) {
+    const plane = this._plane;
+    if (!out) out = new Uint8ClampedArray(plane * 4);
+    const r = this.readChannel(rC), g = this.readChannel(gC), b = this.readChannel(bC);
+    for (let i = 0; i < plane; i++) {
+      out[i * 4 + 0] = r[i] * 255;
+      out[i * 4 + 1] = g[i] * 255;
+      out[i * 4 + 2] = b[i] * 255;
+      out[i * 4 + 3] = 255;
+    }
+    return out;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -723,6 +744,36 @@ export class GLCA {
       out[i * 4 + 0] = (w + buf[i * 4 + 0]) * 255;
       out[i * 4 + 1] = (w + buf[i * 4 + 1]) * 255;
       out[i * 4 + 2] = (w + buf[i * 4 + 2]) * 255;
+      out[i * 4 + 3] = 255;
+    }
+    return out;
+  }
+
+  // Raw values of channel c, length _plane. Reads back texture floor(c/4)
+  // and extracts lane c%4. Requires the same float-readback support used by
+  // readRGBA (EXT_color_buffer_float, checked in the constructor).
+  readChannel(c) {
+    const gl = this.gl, plane = this._plane;
+    const t = Math.floor(c / 4), lane = c % 4;
+    const buf = this._readBuf;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this._sets[this._cur].fbo);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0 + t);
+    gl.readPixels(0, 0, this._W, this._H, gl.RGBA, gl.FLOAT, buf);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    const out = new Float32Array(plane);
+    for (let i = 0; i < plane; i++) out[i] = buf[i * 4 + lane];
+    return out;
+  }
+
+  // Maps three named channels to R,G,B (value*255, clamped 0-255), alpha 255.
+  readChannelsRGB(rC, gC, bC, out) {
+    const plane = this._plane;
+    if (!out) out = new Uint8ClampedArray(plane * 4);
+    const r = this.readChannel(rC), g = this.readChannel(gC), b = this.readChannel(bC);
+    for (let i = 0; i < plane; i++) {
+      out[i * 4 + 0] = r[i] * 255;
+      out[i * 4 + 1] = g[i] * 255;
+      out[i * 4 + 2] = b[i] * 255;
       out[i * 4 + 3] = 255;
     }
     return out;
