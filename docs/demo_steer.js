@@ -211,13 +211,12 @@ export class SteerSim {
     };
   }
 
-  // Effective kernel K0_0 + a*(sx*Kx_0 + sy*Ky_0) at the blob's centroid,
-  // min-max normalized to [0,1]. Returns { data, sx, sy } or null.
-  effectiveKernelAtCentroid() {
-    const c = this.centroid();
-    if (!c) return null;
-    const cx = Math.round(c.x) % S;
-    const cy = Math.round(c.y) % S;
+  // Effective kernel K0_0 + a*(sx*Kx_0 + sy*Ky_0) at a given grid cell
+  // (toroidally wrapped, rounded to the nearest cell), min-max normalized
+  // to [0,1]. Returns { data, sx, sy }.
+  effectiveKernelAtCell(x, y) {
+    const cx = ((Math.round(x) % S) + S) % S;
+    const cy = ((Math.round(y) % S) + S) % S;
     const i = cy * S + cx;
     const sxc = this.sx[i];
     const syc = this.sy[i];
@@ -237,6 +236,14 @@ export class SteerSim {
     for (let j = 0; j < KS * KS; j++) out[j] = (out[j] - lo) / span;
     return { data: out, sx: sxc, sy: syc };
   }
+
+  // Effective kernel at the blob's centroid, min-max normalized to [0,1].
+  // Returns { data, sx, sy } or null when the blob is empty.
+  effectiveKernelAtCentroid() {
+    const c = this.centroid();
+    if (!c) return null;
+    return this.effectiveKernelAtCell(c.x, c.y);
+  }
 }
 
 /* ---------- browser UI ---------- */
@@ -246,6 +253,7 @@ function main() {
   const ctx = canvas.getContext('2d');
   const kCanvas = document.getElementById('kernel-canvas');
   const kCtx = kCanvas.getContext('2d');
+  const kLabel = document.getElementById('kernel-inset-label');
   const status = document.getElementById('demo-status');
   const stepCounter = document.getElementById('step-counter');
   const btnPlay = document.getElementById('btn-play');
@@ -269,6 +277,12 @@ function main() {
   let playing = true;
   let stepAcc = 0;
   let frame = 0;
+
+  // Grid-space cursor position while hovering the main canvas, or null
+  // when the mouse isn't over it (falls back to blob-centroid preview).
+  let hover = null;
+  let lastHoverAt = 0;
+  const HOVER_THROTTLE_MS = 30;
 
   function render() {
     const { A, B } = sim;
@@ -297,7 +311,14 @@ function main() {
   }
 
   function renderKernelInset() {
-    const eff = sim.effectiveKernelAtCentroid();
+    let eff;
+    if (hover) {
+      eff = sim.effectiveKernelAtCell(hover.x, hover.y);
+      kLabel.textContent = 'kernel at cursor';
+    } else {
+      eff = sim.effectiveKernelAtCentroid();
+      kLabel.textContent = 'kernel at the blob';
+    }
     const px = kImg.data;
     for (let j = 0; j < KS * KS; j++) {
       const v = eff ? eff.data[j] : 0;
@@ -336,6 +357,21 @@ function main() {
     sim.updateField();
   }
 
+  // Grid coords under the pointer, for the kernel-inset hover preview.
+  // Runs alongside (not instead of) drag handling on the same pointermove.
+  function updateHover(e) {
+    const now = performance.now();
+    if (now - lastHoverAt < HOVER_THROTTLE_MS) return;
+    lastHoverAt = now;
+    const rect = canvas.getBoundingClientRect();
+    let gx = ((e.clientX - rect.left) / rect.width) * S;
+    let gy = ((e.clientY - rect.top) / rect.height) * S;
+    gx = Math.max(0, Math.min(S - 0.001, gx));
+    gy = Math.max(0, Math.min(S - 0.001, gy));
+    hover = { x: gx, y: gy };
+    if (sim) renderKernelInset();
+  }
+
   let dragging = false;
   canvas.addEventListener('pointerdown', (e) => {
     dragging = true;
@@ -345,12 +381,17 @@ function main() {
   });
   canvas.addEventListener('pointermove', (e) => {
     if (dragging) moveDot(e);
+    updateHover(e);
   });
   canvas.addEventListener('pointerup', () => {
     dragging = false;
   });
   canvas.addEventListener('pointercancel', () => {
     dragging = false;
+  });
+  canvas.addEventListener('pointerleave', () => {
+    hover = null;
+    if (sim) renderKernelInset();
   });
 
   btnPlay.addEventListener('click', () => {
