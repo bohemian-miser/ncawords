@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An interactive demo of channel-modulated Lenia kernels: a control channel B is painted by hand and locally decides which trained physics governs channel A.">
+<title>Kernel Modulation Demo &mdash; Channel B Picks Channel A&rsquo;s Physics</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* demo-page-only additions, layered on top of style.css */
+  .demo-canvas-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0;
+    overflow-x: auto;
+  }
+  #demo-canvas {
+    width: 480px;
+    height: 480px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    background: #fff;
+    border: 1px solid var(--cell-border);
+    border-radius: 6px;
+    cursor: crosshair;
+    touch-action: none;
+    max-width: 100%;
+    height: auto;
+  }
+
+  .demo-legend {
+    text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0.7rem 0 1.1rem;
+  }
+
+  .demo-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1.1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--rule);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+  }
+  .demo-controls + .demo-controls { border-top: none; padding-top: 0; }
+
+  .ctl-group {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-soft);
+  }
+  .ctl-group label { white-space: nowrap; }
+  .ctl-group input[type="range"] { width: 100px; accent-color: var(--accent); }
+  .ctl-group select {
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--btn-bg);
+    border: 1px solid var(--btn-border);
+    border-radius: 6px;
+    padding: 0.32rem 0.5rem;
+  }
+  .ctl-group input[type="checkbox"] { accent-color: var(--accent); }
+
+  .preset-group { display: flex; gap: 0.4rem; }
+  .preset-group button { font-size: 0.78rem; padding: 0.36rem 0.7rem; }
+
+  #demo-status {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    text-align: center;
+    min-height: 1.2em;
+  }
+
+  .kernel-strip-row {
+    display: flex;
+    gap: 2rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 1.3rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--rule);
+  }
+  .kernel-strip { text-align: center; }
+  .kernel-strip canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #eee;
+    border: 1px solid var(--cell-border);
+    border-radius: 4px;
+    display: block;
+    margin: 0 auto 0.5rem;
+  }
+  .kernel-strip-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+  }
+
+  @media (max-width: 540px) {
+    #demo-canvas { width: 100%; }
+    .ctl-group input[type="range"] { width: 70px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="sitenav" aria-label="Site">
+  <a href="index.html">Article</a>
+  <a href="dashboard.html">Experiment gallery</a>
+  <a href="research.html">Research log</a>
+  <a href="lenia.html">Lenia lab</a>
+  <a href="demo_modulation.html" aria-current="page">Demos</a>
+</nav>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Interactive demo</p>
+    <h1>Channel B Modulates Channel A&rsquo;s Kernel</h1>
+    <p class="subtitle">
+      In our trainable-Lenia systems, a cell&rsquo;s rules can depend on the
+      state itself: the <code>dyn1</code>/<code>dynwave</code> variants use a
+      small network that reads the local state and composes that cell&rsquo;s
+      kernel from a basis, per cell, per step. This demo makes that
+      mechanism visible by hand.
+    </p>
+  </div>
+</header>
+
+<div class="article-column">
+  <p>
+    Channel A is a living Lenia pattern. Channel B is a control field you
+    paint. Each cell&rsquo;s update for A blends two separately
+    <em>trained</em> physics according to B&rsquo;s local value: where
+    B&nbsp;&asymp;&nbsp;0 the cell runs the &ldquo;hex&rdquo; physics
+    (short-range kernels, a fine lattice); where B&nbsp;&asymp;&nbsp;1 it
+    runs the &ldquo;dots&rdquo; physics (long-range inhibition rings, polka
+    dots). Nothing else changes &mdash; the strength of the second channel
+    literally determines the kernel the first channel is stepped with, cell
+    by cell.
+  </p>
+  <p>
+    This is a hand-built illustration of what <code>dyn1</code> and
+    <code>dynwave</code> learn end-to-end &mdash; there, the blend is a
+    trained function of hidden state rather than a channel you paint
+    yourself. More mini-demos like this one will follow as we pull other
+    pieces of the trainable-Lenia machinery out into the open.
+  </p>
+</div>
+
+<div class="figure-column">
+  <figure id="demo-figure">
+    <p class="figure-title">Paint the rules, watch them run</p>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <label for="view-select">view</label>
+        <select id="view-select">
+          <option value="a" selected>A only</option>
+          <option value="ab">A + B tint</option>
+          <option value="b">B only</option>
+        </select>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-radius">brush radius</label>
+        <input id="brush-radius" type="range" min="4" max="20" step="1" value="10">
+        <span id="brush-radius-val">10</span>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-value">brush value</label>
+        <input id="brush-value" type="range" min="0" max="1" step="0.05" value="1">
+        <span id="brush-value-val">1.00</span>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-erase">erase (or right-drag)</label>
+        <input id="brush-erase" type="checkbox">
+      </span>
+    </div>
+
+    <div class="demo-canvas-wrap">
+      <canvas id="demo-canvas" width="96" height="96" aria-label="Channel A and B state, click or drag to paint B"></canvas>
+    </div>
+    <p class="demo-legend">
+      B=0 &rarr; hex physics &middot; B=1 &rarr; dots physics &mdash; paint to choose the rules locally
+    </p>
+    <p id="demo-status">loading trained physics&hellip;</p>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <button id="btn-play">Pause</button>
+        <button id="btn-reset">Reset A (noise)</button>
+      </span>
+      <span class="preset-group">
+        <button id="btn-b-ramp">B: ramp</button>
+        <button id="btn-b-zero">B: all 0</button>
+        <button id="btn-b-one">B: all 1</button>
+      </span>
+      <span class="speed-group">
+        <label for="speed">speed</label>
+        <input id="speed" type="range" min="0.25" max="4" step="0.25" value="1">
+        <span id="speed-label">1&times;</span>
+      </span>
+      <span class="status-group">
+        <span>step <span id="step-counter">0</span></span>
+      </span>
+    </div>
+
+    <div class="kernel-strip-row">
+      <div class="kernel-strip">
+        <canvas id="kernels-hex"></canvas>
+        <div class="kernel-strip-label">hex kernels (B=0)</div>
+      </div>
+      <div class="kernel-strip">
+        <canvas id="kernels-dots"></canvas>
+        <div class="kernel-strip-label">dots kernels (B=1)</div>
+      </div>
+    </div>
+
+    <figcaption>
+      <b>Two trained physics, one blend.</b> Both sets of kernels come from
+      independently trained <code>multik</code> Lenia runs (3 kernels each,
+      15&times;15, toroidal). At every step this page convolves channel A
+      with <em>both</em> kernel sets, turns each result into a growth signal,
+      and mixes the two growth fields cell-by-cell using B as the mixing
+      weight &mdash; then applies that blended update to A. Painting B never
+      touches A directly; it only ever changes which physics A is living
+      under, locally.
+    </figcaption>
+  </figure>
+</div>
+
+<footer>
+  <div class="article-column">
+    <p>
+      Kernels and weights are read live from a public training bucket, the
+      same source the <a href="lenia.html">Lenia lab</a> gallery uses. See
+      the <a href="research.html">research log</a> for how these physics
+      were trained.
+    </p>
+    <a href="lenia.html">&larr; Lenia lab</a> &middot;
+    <a href="research.html">Research log &rarr;</a>
+  </div>
+</footer>
+
+<script type="module" src="demo_modulation.js"></script>
+</body>
+</html>
