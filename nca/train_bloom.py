@@ -83,12 +83,23 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
           f"fire {fire_rate}, fester {fester_p}")
 
     if emoji:
-        # emoji target: alpha silhouette from Twemoji; RGB stays free, so the
-        # model paints its own emoji (structure-only principle unchanged)
-        from nca.train_lenia import emoji_target
-        a2 = emoji_target(emoji, H=56, W=64, size=44)
+        # emoji target: full RGBA from Twemoji. Alpha-only supervision here
+        # just made black blobs — an emoji IS its colors, so emoji mode
+        # supervises RGB too (masked to the emoji region); words keep the
+        # structure-only principle.
+        import io as _io
+        import urllib.request
+        url = ("https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/"
+               f"72x72/{emoji}.png")
+        with urllib.request.urlopen(url) as r:
+            eimg = Image.open(_io.BytesIO(r.read())).convert("RGBA")
+        eimg = eimg.resize((44, 44), Image.LANCZOS)
+        ea = np.asarray(eimg, np.float32) / 255.0
         tgt_np = np.zeros((4, 56, 64), np.float32)
-        tgt_np[3] = a2
+        y0, x0 = (56 - 44) // 2, (64 - 44) // 2
+        for c in range(3):
+            tgt_np[c, y0:y0 + 44, x0:x0 + 44] = ea[..., c] * ea[..., 3]
+        tgt_np[3, y0:y0 + 44, x0:x0 + 44] = ea[..., 3]
     elif scaffold == "3line":
         tgt_np = render_word_3_line(text, glyph)
     elif scaffold == "fan3":
@@ -97,6 +108,7 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
         tgt_np = render_word_9_line(text, glyph, char_alpha=255, strand_alpha=0)
     _, h, w = tgt_np.shape
     tgt_a = torch.from_numpy(tgt_np[3:4])[None].repeat(batch, 1, 1, 1).to(device)
+    tgt_rgb = torch.from_numpy(tgt_np[:3])[None].to(device) if emoji else None
     morph_ch = channel_n - 1   # last hidden channel carries the cloud
 
     if snap_dir:
@@ -154,6 +166,10 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
         vw = void_w * min(1.0, step / max(1, warmup))
         wmap = 1.0 + vw * (tgt_a > 0.5).float() * (x[:, 3:4] < 0.3).float()
         loss = (wmap * (x[:, 3:4] - tgt_a) ** 2).mean()
+        if emoji:
+            em = (tgt_a > 0.3).float()
+            loss = loss + ((x[:, :3] - tgt_rgb) ** 2 * em).sum() \
+                / (em.sum() * 3 + 1e-8)
 
         opt.zero_grad()
         loss.backward()
