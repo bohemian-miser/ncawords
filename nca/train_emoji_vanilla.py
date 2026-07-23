@@ -21,6 +21,7 @@ from nca.model import NCA, to_rgba
 from nca.train_web_hidden import damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
+from nca.rollout import fester
 
 
 def emoji_rgba(code, H=64, W=64, size=44):
@@ -40,8 +41,8 @@ def emoji_rgba(code, H=64, W=64, size=44):
 
 def train(emoji="1f642", label=None, steps=8000, channel_n=16, hidden_n=96,
           batch=16, pool_size=256, lr=2e-3, ca_min=64, ca_max=96,
-          damage_p=0.3, rng_seed=0, log_every=200, ckpt_every=500,
-          snap_dir=None):
+          damage_p=0.3, damage_n=2, fester_p=0.0, rng_seed=0,
+          log_every=200, ckpt_every=500, snap_dir=None):
     label = label or emoji
     torch.manual_seed(sum(map(ord, emoji)) + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -84,8 +85,12 @@ def train(emoji="1f642", label=None, steps=8000, channel_n=16, hidden_n=96,
         x = x[rank]; idx = idx[rank]
         x[:1] = seed
         if torch.rand(1).item() < damage_p:
-            m = damage_mask_rect(2, h, w, device)
-            x[-2:] = x[-2:] * m
+            nd = int(torch.randint(1, damage_n + 1, (1,)))
+            m = damage_mask_rect(nd, h, w, device)
+            x[-nd:] = x[-nd:] * m
+        if fester_p > 0 and torch.rand(1).item() < fester_p:
+            x = fester(model, x,
+                       damage_fn=lambda z: z * damage_mask_rect(z.shape[0], h, w, device))
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
@@ -128,9 +133,13 @@ if __name__ == "__main__":
     p.add_argument("--emoji", default="1f642")
     p.add_argument("--label", default=None)
     p.add_argument("--steps", type=int, default=8000)
+    p.add_argument("--damage-p", type=float, default=0.3)
+    p.add_argument("--damage-n", type=int, default=2)
+    p.add_argument("--fester-p", type=float, default=0.0)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
-    train(emoji=a.emoji, label=a.label, steps=a.steps, rng_seed=a.rng_seed,
+    train(emoji=a.emoji, label=a.label, steps=a.steps, damage_p=a.damage_p,
+          damage_n=a.damage_n, fester_p=a.fester_p, rng_seed=a.rng_seed,
           log_every=a.log_every, snap_dir=a.snap_dir)
