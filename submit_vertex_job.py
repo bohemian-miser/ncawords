@@ -11,6 +11,12 @@ except ImportError:
     print("Please install google-cloud-aiplatform first: pip install google-cloud-aiplatform")
     sys.exit(1)
 
+# Prefer the dedicated submitter service-account key when present (no daily
+# reauth); harmless no-op if the file is missing or ADC is already set.
+_SA_KEY = os.path.expanduser("~/.config/nca/submitter-key.json")
+if os.path.exists(_SA_KEY):
+    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", _SA_KEY)
+
 PROJECT_ID = "recipe-lanes-staging"
 LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
 BUCKET_NAME = "recipe-lanes-nca-jobs"
