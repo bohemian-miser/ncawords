@@ -164,7 +164,9 @@ class Lenia(nn.Module):
             self.gin = nn.Parameter(torch.randn(C) * 0.2 + 0.7)
         elif variant == "dynwave":
             # fixed oriented Gabor basis (8 orientations), per-cell mixing NN:
-            # cells steer their own perception direction locally
+            # cells steer their own perception direction locally. With C>1 the
+            # mixer also reads the extra channels (e.g. a clamped scaffold),
+            # so steering can respond to a conditioning field.
             rr = make_radius(torch.device("cpu"))
             cy = (torch.arange(KS) - KS // 2).float() / (KS // 2)
             xx, yy = cy[None, :].expand(KS, KS), cy[:, None].expand(KS, KS)
@@ -177,7 +179,7 @@ class Lenia(nn.Module):
                 ks.append(k / (k.abs().sum() + 1e-8))
             self.register_buffer("basis", torch.stack(ks)[:, None])
             self.mix = nn.Sequential(
-                nn.Conv2d(1 + 8, hidden, 1), nn.ReLU(), nn.Conv2d(hidden, 8, 1))
+                nn.Conv2d(C + 8, hidden, 1), nn.ReLU(), nn.Conv2d(hidden, 8, 1))
             self.bank = WaveBank(1)   # growth params only
         elif variant == "dyn1":
             # fixed ring basis; NN reads (x, basis outputs) -> per-cell mixing
@@ -217,11 +219,11 @@ class Lenia(nn.Module):
             g = self.bank.growth(u, anneal) * self.bank.gains().view(1, -1, 1, 1)
             dx = g.sum(1, keepdim=True)
         elif v == "dynwave":
-            u_b = self.conv(x, self.basis[:, 0])
+            u_b = self.conv(x[:, :1], self.basis[:, 0])
             c = torch.tanh(self.mix(torch.cat([x, u_b], 1)))
             u = (c * u_b).sum(1, keepdim=True)
             g = self.bank.growth(u, anneal) * self.bank.gains().view(1, -1, 1, 1)
-            dx = g
+            dx = torch.cat([g, torch.zeros_like(x[:, 1:])], 1) if C > 1 else g
         elif v == "dyn1":
             u_b = self.conv(x, self.basis[:, 0])            # [B,Bn,H,W]
             c = torch.tanh(self.mix(torch.cat([x, u_b], 1)))
@@ -304,13 +306,19 @@ def emoji_target(code, H=64, W=64, size=44):
     return out
 
 
-def word_target(text, H=64, W=64):
+def word_target(text, H=64, W=64, scale=1.0):
     """Anchored word bitmap (letters + faint fan scaffold) centred on the
     canvas, channel-0 alpha only. Words are positioned, not textures, so the
-    trainer switches to plain MSE for these."""
+    trainer switches to plain MSE for these. scale upsamples the rendered
+    word so letter strokes are resolvable at the kernel's scale."""
     from nca.train_staged import render_word_3_line_fan
     arr = render_word_3_line_fan(text, 12)          # [4,h,w]
     a = arr[3]
+    if scale != 1.0:
+        im = Image.fromarray((a * 255).astype(np.uint8))
+        im = im.resize((int(a.shape[1] * scale), int(a.shape[0] * scale)),
+                       Image.BILINEAR)
+        a = np.asarray(im, np.float32) / 255.0
     h, w = a.shape
     out = np.zeros((H, W), np.float32)
     y0, x0 = max(0, (H - h) // 2), max(0, (W - w) // 2)
@@ -349,9 +357,18 @@ def spec(x):
 
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
           size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
+          cond="none", train_init=False, word_scale=1.0,
           rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
-    if variant in ("static1", "dyn1", "multik", "aniso", "wave", "dynwave"):
-        C = 1   # single-channel families; sphere/sharedk/full keep C
+    if variant in ("static1", "dyn1", "multik", "aniso", "wave"):
+        C = 1   # single-channel families; sphere/sharedk/full/dynwave keep C
+    if cond == "scaffold":
+        # conditioning channel: a clamped prepattern the physics can read.
+        # Uniform rules cannot memorise WHERE letters go (positional info has
+        # nowhere to live in ~10^2 params) — the scaffold channel supplies
+        # position, the physics learns local development. Needs >=2 channels.
+        C = max(C, 2)
+    elif variant == "dynwave":
+        C = 1
     torch.manual_seed(400 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = Lenia(variant, C=C, K=K).to(device)
@@ -367,7 +384,8 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         stages = [full] if word_full else \
             [full[:i + 1] for i in range(len(full))]
         stage, stage_start = 0, 0
-        tgt = torch.from_numpy(word_target(stages[0], size, size)).to(device)
+        tgt = torch.from_numpy(
+            word_target(stages[0], size, size, word_scale)).to(device)
     elif target.startswith("emoji:"):
         stages = [target[6:]]
         stage, stage_start = 0, 0
@@ -396,14 +414,35 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         return F.mse_loss(spec(x[:, 0]), ts.expand(x.shape[0], -1, -1)) \
             + 2.0 * (x[:, 0].mean() - t.mean()) ** 2
 
+    scaf = None
+    if cond == "scaffold":
+        scaf = (tgt * 0.5)[None, None]     # faint prepattern, clamped in
+
+    init_logits = None
+    if train_init:
+        # jointly-learned initial board (all channels except the scaffold):
+        # position lives in the STATE, dynamics in the rules
+        init_logits = torch.full(
+            (1, C - (1 if scaf is not None else 0), size, size), -2.0,
+            device=device, requires_grad=True)
+
     def make_init(t):
         x = torch.rand(batch, C, size, size, device=device) * (0.15 if is_word else 0.6)
-        if is_word:
+        if init_logits is not None:
+            nb = init_logits.shape[1]
+            x[:, :nb] = torch.sigmoid(init_logits) \
+                + torch.randn(batch, nb, size, size, device=device) * 0.03
+        elif is_word and cond != "scaffold":
             # bright blob at the fan origin (left-middle of the word)
             cols = (t > 0.3).any(dim=0).nonzero()
             x0c = int(cols.min()) if len(cols) else size // 2
             x[:, :, size // 2 - 2:size // 2 + 3, max(0, x0c - 2):x0c + 3] = 1.0
+        if scaf is not None:
+            x[:, -1:] = scaf
         return x
+
+    if init_logits is not None:
+        opt.add_param_group({"params": [init_logits]})
 
     # loss of an untrained noise board: the normalisation baseline that makes
     # losses comparable across targets ('loss_rel' = loss / baseline)
@@ -417,7 +456,9 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
     meta = RunMeta(snap_dir, f"LENIA-{variant}-{target}", "nca.train_lenia",
                    {"variant": variant, "target": target, "C": C, "K": K,
                     "steps": steps, "batch": batch, "lr": lr,
-                    "rng_seed": rng_seed, "params": n_par},
+                    "rng_seed": rng_seed, "params": n_par, "cond": cond,
+                    "train_init": train_init, "word_scale": word_scale,
+                    "size": size, "grok": grok},
                    C, 0, "noise", steps, device, tags=["lenia", variant, target])
 
     start_step, ck = try_resume(snap_dir, model, opt, sched, device=device)
@@ -438,6 +479,8 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         x = make_init(tgt)
         for _ in range(T):
             x = model.step(x, anneal)
+            if scaf is not None:
+                x = torch.cat([x[:, :-1], scaf.expand(batch, 1, size, size)], 1)
         loss = loss_fn(x, tgt, tgt_spec, step)
         rel = loss.item() / baseline
 
@@ -457,7 +500,9 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                 print(f"=== word stage '{stages[stage]}' at step {step} "
                       f"(avg rel {avg:.3f}) ===", flush=True)
                 tgt = torch.from_numpy(
-                    word_target(stages[stage], size, size)).to(device)
+                    word_target(stages[stage], size, size, word_scale)).to(device)
+                if scaf is not None:
+                    scaf = (tgt * 0.5)[None, None]
                 with torch.no_grad():
                     baseline = float(loss_fn(make_init(tgt), tgt, None)) + 1e-8
                 if snap_dir:
@@ -527,6 +572,12 @@ if __name__ == "__main__":
     p.add_argument("--steps", type=int, default=6000)
     p.add_argument("--word-full", action="store_true",
                    help="train the whole word at once (no letter curriculum)")
+    p.add_argument("--cond", default="none", choices=["none", "scaffold"],
+                   help="scaffold: clamp a faint prepattern channel each step")
+    p.add_argument("--train-init", action="store_true",
+                   help="jointly learn the initial board (position in state)")
+    p.add_argument("--word-scale", type=float, default=1.0)
+    p.add_argument("--size", type=int, default=64)
     p.add_argument("--grok", action="store_true",
                    help="AdamW + weight decay + constant LR for grokking runs")
     p.add_argument("--rng-seed", type=int, default=0)
@@ -534,5 +585,6 @@ if __name__ == "__main__":
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(variant=a.variant, target=a.target, C=a.channels, K=a.kernels,
-          steps=a.steps, word_full=a.word_full, grok=a.grok,
+          steps=a.steps, word_full=a.word_full, grok=a.grok, cond=a.cond,
+          train_init=a.train_init, word_scale=a.word_scale, size=a.size,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
