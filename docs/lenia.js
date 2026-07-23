@@ -122,6 +122,28 @@ function latestLoss(losses) {
     return losses[losses.length - 1];   // [step, loss], assumed step-ascending
 }
 
+// loss_rel isn't present on any run we've seen yet, but the training job
+// may start emitting it on a trailing history/losses entry — check both
+// spots defensively rather than assuming a fixed schema.
+function extractLossRel(rj) {
+    if (!rj) return null;
+    if (Array.isArray(rj.history) && rj.history.length) {
+        const last = rj.history[rj.history.length - 1];
+        if (last && typeof last === 'object' && last.loss_rel !== undefined) return last.loss_rel;
+    }
+    if (Array.isArray(rj.losses) && rj.losses.length) {
+        const last = rj.losses[rj.losses.length - 1];
+        if (last && typeof last === 'object' && !Array.isArray(last) && last.loss_rel !== undefined) return last.loss_rel;
+    }
+    return null;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 async function fetchRunJson(tr, m) {
     try {
         const res = await fetch(m.dir + 'run.json?t=' + Date.now());
@@ -129,11 +151,19 @@ async function fetchRunJson(tr, m) {
         const rj = await res.json();
         m.desc = rj.text || '';
         m.tags = rj.tags || [];
+        m.args = rj.args || null;
+        m.losses = Array.isArray(rj.losses) ? rj.losses : [];
+        const lossVals = m.losses.map(p => Number(p[1])).filter(Number.isFinite);
+        m.finalLoss = lossVals.length ? lossVals[lossVals.length - 1] : null;
+        m.minLoss = lossVals.length ? Math.min(...lossVals) : null;
+        m.lossRel = extractLossRel(rj);
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
         if (sub) sub.innerText = buildSubtitle(rj.args) || '(no args recorded)';
         tr.runJson = rj;
         renderStatus(tr);
-        applyFilters();   // desc/tags just arrived; re-run the search filter
+        drawSparkline(tr, m);
+        updateFilterBounds();
+        applyFilters();   // desc/tags/args/loss just arrived; re-run all filters
     } catch (e) {
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
         if (sub) sub.innerText = '(run.json unavailable)';
@@ -214,6 +244,100 @@ function renderKernelFrame(tr, compStep) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Loss-curve rendering — shared by the per-card sparkline and the large
+// graph in the detail modal. Auto-switches to a log-y axis whenever the
+// curve spans more than ~1.5 orders of magnitude, since Lenia losses can
+// start near 1 and settle two-plus decades lower.
+// ---------------------------------------------------------------------
+
+function computeLossScale(values) {
+    const finite = values.filter(v => Number.isFinite(v) && v > 0);
+    if (!finite.length) return null;
+    const min = Math.min(...finite);
+    const max = Math.max(...finite);
+    const useLog = min > 0 && (max / min) > 30;
+    return { min, max, useLog };
+}
+
+function lossY(v, scale, h, padTop, padBottom) {
+    const usableH = h - padTop - padBottom;
+    const vClamped = Math.max(v, scale.min);
+    let t;
+    if (scale.useLog) {
+        const lo = Math.log(scale.min);
+        const hi = Math.log(Math.max(scale.max, scale.min * 1.0001));
+        t = (Math.log(vClamped) - lo) / (hi - lo || 1);
+    } else {
+        t = (vClamped - scale.min) / ((scale.max - scale.min) || 1);
+    }
+    return padTop + (1 - t) * usableH;
+}
+
+function drawLossCurve(canvas, losses, { big = false } = {}) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    if (!Array.isArray(losses) || losses.length === 0) {
+        ctx.fillStyle = '#666';
+        ctx.font = (big ? '12px' : '9px') + ' sans-serif';
+        ctx.fillText('no loss data', 4, h / 2);
+        return;
+    }
+    const values = losses.map(p => Number(p[1]));
+    const scale = computeLossScale(values);
+    if (!scale) {
+        ctx.fillStyle = '#666';
+        ctx.font = (big ? '12px' : '9px') + ' sans-serif';
+        ctx.fillText('no loss data', 4, h / 2);
+        return;
+    }
+    const padLeft = big ? 46 : 2;
+    const padRight = big ? 10 : 2;
+    const padTop = big ? 10 : 3;
+    const padBottom = big ? 20 : 3;
+    const n = losses.length;
+
+    ctx.strokeStyle = '#4db8ff';
+    ctx.lineWidth = big ? 1.5 : 1;
+    ctx.beginPath();
+    losses.forEach((p, i) => {
+        const x = padLeft + (n > 1 ? (i / (n - 1)) : 1) * (w - padLeft - padRight);
+        const y = lossY(Number(p[1]), scale, h, padTop, padBottom);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // current (final) value as a dot
+    const lastX = padLeft + (w - padLeft - padRight);
+    const lastY = lossY(values[values.length - 1], scale, h, padTop, padBottom);
+    ctx.fillStyle = '#ff9f40';
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, big ? 3.5 : 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (big) {
+        ctx.fillStyle = '#999';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(scale.max.toFixed(4), padLeft - 6, padTop + 8);
+        ctx.fillText(scale.min.toFixed(4), padLeft - 6, h - padBottom);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#666';
+        ctx.fillText(scale.useLog ? 'log scale' : 'linear scale', padLeft, h - 4);
+    }
+}
+
+function drawSparkline(tr, m) {
+    if (!tr.sparkCanvas) return;
+    drawLossCurve(tr.sparkCanvas, m.losses, { big: false });
+    if (tr.sparkLabelObj) {
+        tr.sparkLabelObj.innerText = (typeof m.finalLoss === 'number')
+            ? m.finalLoss.toFixed(4) : '–';
+    }
+}
+
 function updateScrubRange(tr) {
     if (tr.scrubObj) tr.scrubObj.max = Math.max(0, tr.compSteps.length - 1);
 }
@@ -251,7 +375,10 @@ function buildCard(m) {
     card.className = 'card';
     card.id = `card_${m.id}`;
     card.innerHTML = `
-        <h3>${m.title}</h3>
+        <h3>
+            <span class="lenia-card-title" id="title_${m.id}" title="Click for run details">${m.title}</span>
+            <button class="info-btn" id="info_${m.id}" title="Run details">&#9432;</button>
+        </h3>
         <div class="run-desc" id="subtitle_${m.id}">Loading run.json…</div>
         <div class="img-container" style="height:220px;">
             <img loading="lazy" id="comp_${m.id}" src="${BLANK_IMG}">
@@ -269,12 +396,20 @@ function buildCard(m) {
             </div>
             <div>
                 <div class="sub-desc" id="coupling_label_${m.id}">channel coupling</div>
-                <div class="img-container"><img loading="lazy" id="coupling_${m.id}" style="display:none;"></div>
+                <div class="img-container"><img loading="lazy" id="coupling_${m.id}" style="display:none;" title="channel coupling (red +, blue −, gray 0; older runs: grayscale)"></div>
             </div>
         </div>
         <div class="target-row">
-            <div class="sub-desc">Target</div>
-            <div class="img-container"><img loading="lazy" id="target_${m.id}" src="${m.dir}target.png" onerror="this.style.display='none'"></div>
+            <div class="target-row-flex">
+                <div>
+                    <div class="sub-desc">Target</div>
+                    <div class="img-container" style="height:90px;width:90px;"><img loading="lazy" id="target_${m.id}" src="${m.dir}target.png" onerror="this.style.display='none'"></div>
+                </div>
+                <div class="spark-wrap">
+                    <div class="sub-desc">loss <span id="spark_label_${m.id}">–</span></div>
+                    <canvas id="spark_${m.id}" width="160" height="90"></canvas>
+                </div>
+            </div>
         </div>
         <div class="status" id="status_${m.id}">Loading…</div>
         <div class="lenia-live-toggle">
@@ -318,6 +453,10 @@ function buildCard(m) {
         frameLabelObj: card.querySelector(`#frame_${esc}`),
         statusObj: card.querySelector(`#status_${esc}`),
         playBtn: card.querySelector(`#play_${esc}`),
+        sparkCanvas: card.querySelector(`#spark_${esc}`),
+        sparkLabelObj: card.querySelector(`#spark_label_${esc}`),
+        titleObj: card.querySelector(`#title_${esc}`),
+        infoBtn: card.querySelector(`#info_${esc}`),
         // --- live physics widget state ---
         liveToggleBtn: card.querySelector(`#livetoggle_${esc}`),
         liveSecObj: card.querySelector(`#live_${esc}`),
@@ -334,6 +473,9 @@ function buildCard(m) {
     };
     tr.playBtn.onclick = () => window.togglePlay(m.id);
     tr.scrubObj.oninput = (e) => window.scrubTo(m.id, e.target.value);
+    tr.titleObj.onclick = () => openLeniaModal(m.id);
+    tr.infoBtn.onclick = () => openLeniaModal(m.id);
+    drawSparkline(tr, m);
 
     tr.liveCtx = tr.liveCanvas.getContext('2d');
     tr.liveToggleBtn.onclick = () => activateOrCollapseLive(tr);
@@ -413,17 +555,282 @@ function sortCards() {
     });
 }
 
+// ---------------------------------------------------------------------
+// Structured filters (channels / kernels / params / final loss), layered
+// on top of the existing text search. Bounds for the dropdowns and range
+// sliders are derived from whatever run.json args/losses have loaded so
+// far and widen as more runs stream in; a card with no run.json yet keeps
+// showing normally *unless* some filter has actually been narrowed away
+// from its full-range default, at which point unknown-data cards drop out
+// (we can't tell if they'd match, so we don't claim they do).
+// ---------------------------------------------------------------------
+
+const filterBounds = { paramsMin: null, paramsMax: null, lossMin: null, lossMax: null };
+let paramsUserTouched = false;
+let lossUserTouched = false;
+
+// Loss range slider positions are 0..1000 mapped log-scale onto
+// [filterBounds.lossMin, filterBounds.lossMax] so the two ends of the
+// slider stay usable even though final losses can span decades.
+function lossSliderToValue(pos) {
+    const { lossMin, lossMax } = filterBounds;
+    if (lossMin === null || lossMax === null || lossMax <= lossMin) return lossMin || 0;
+    const lo = Math.log(Math.max(lossMin, 1e-9));
+    const hi = Math.log(Math.max(lossMax, lossMin * 1.0001, 1e-9));
+    const t = Math.min(1, Math.max(0, pos / 1000));
+    return Math.exp(lo + t * (hi - lo));
+}
+
+function fmtLoss(v) { return Number.isFinite(v) ? v.toFixed(4) : '–'; }
+
+function updateParamsLabels() {
+    const minInp = document.getElementById('params-min');
+    const maxInp = document.getElementById('params-max');
+    document.getElementById('params-min-label').innerText = minInp ? minInp.value : '–';
+    document.getElementById('params-max-label').innerText = maxInp ? maxInp.value : '–';
+}
+
+function updateLossLabels() {
+    const minInp = document.getElementById('loss-min');
+    const maxInp = document.getElementById('loss-max');
+    if (minInp) document.getElementById('loss-min-label').innerText = fmtLoss(lossSliderToValue(parseFloat(minInp.value)));
+    if (maxInp) document.getElementById('loss-max-label').innerText = fmtLoss(lossSliderToValue(parseFloat(maxInp.value)));
+}
+
+window.onParamsRangeInput = function () {
+    paramsUserTouched = true;
+    updateParamsLabels();
+    applyFilters();
+};
+
+window.onLossRangeInput = function () {
+    lossUserTouched = true;
+    updateLossLabels();
+    applyFilters();
+};
+
+// Rebuilds the channels/kernels dropdown options and the params/loss range
+// bounds from every method's loaded args/losses. Only widens bounds (never
+// shrinks), and only snaps slider positions back to the full range while
+// the user hasn't touched that slider yet, so an in-progress filter isn't
+// clobbered by a later-arriving run.
+function updateFilterBounds() {
+    const cVals = new Set();
+    const kVals = new Set();
+    let pMin = null, pMax = null, lMin = null, lMax = null;
+    methods.forEach(m => {
+        const a = m.args;
+        if (a) {
+            if (a.C !== undefined) cVals.add(a.C);
+            if (a.K !== undefined) kVals.add(a.K);
+            if (typeof a.params === 'number') {
+                pMin = (pMin === null) ? a.params : Math.min(pMin, a.params);
+                pMax = (pMax === null) ? a.params : Math.max(pMax, a.params);
+            }
+        }
+        if (typeof m.finalLoss === 'number' && m.finalLoss > 0) {
+            lMin = (lMin === null) ? m.finalLoss : Math.min(lMin, m.finalLoss);
+            lMax = (lMax === null) ? m.finalLoss : Math.max(lMax, m.finalLoss);
+        }
+    });
+
+    const chSel = document.getElementById('filter-channels');
+    if (chSel) {
+        const cur = chSel.value;
+        const sorted = [...cVals].sort((a, b) => a - b);
+        chSel.innerHTML = '<option value="any">Any</option>'
+            + sorted.map(c => `<option value="${c}">${c}</option>`).join('');
+        chSel.value = sorted.some(c => String(c) === cur) ? cur : 'any';
+    }
+    const kSel = document.getElementById('filter-kernels');
+    if (kSel) {
+        const cur = kSel.value;
+        const sorted = [...kVals].sort((a, b) => a - b);
+        kSel.innerHTML = '<option value="any">Any</option>'
+            + sorted.map(k => `<option value="${k}">${k}</option>`).join('');
+        kSel.value = sorted.some(k => String(k) === cur) ? cur : 'any';
+    }
+
+    if (pMin !== null) {
+        filterBounds.paramsMin = (filterBounds.paramsMin === null) ? pMin : Math.min(filterBounds.paramsMin, pMin);
+        filterBounds.paramsMax = (filterBounds.paramsMax === null) ? pMax : Math.max(filterBounds.paramsMax, pMax);
+        const minInp = document.getElementById('params-min');
+        const maxInp = document.getElementById('params-max');
+        if (minInp && maxInp) {
+            minInp.min = maxInp.min = filterBounds.paramsMin;
+            minInp.max = maxInp.max = filterBounds.paramsMax;
+            if (!paramsUserTouched) {
+                minInp.value = filterBounds.paramsMin;
+                maxInp.value = filterBounds.paramsMax;
+            }
+        }
+    }
+    if (lMin !== null) {
+        filterBounds.lossMin = (filterBounds.lossMin === null) ? lMin : Math.min(filterBounds.lossMin, lMin);
+        filterBounds.lossMax = (filterBounds.lossMax === null) ? lMax : Math.max(filterBounds.lossMax, lMax);
+        if (!lossUserTouched) {
+            const minInp = document.getElementById('loss-min');
+            const maxInp = document.getElementById('loss-max');
+            if (minInp) minInp.value = 0;
+            if (maxInp) maxInp.value = 1000;
+        }
+    }
+    updateParamsLabels();
+    updateLossLabels();
+}
+
 function applyFilters() {
     const q = (document.getElementById('search-box')?.value || '').toLowerCase();
+    const chSel = document.getElementById('filter-channels');
+    const kSel = document.getElementById('filter-kernels');
+    const chVal = chSel ? chSel.value : 'any';
+    const kVal = kSel ? kSel.value : 'any';
+
+    const pMinInp = document.getElementById('params-min');
+    const pMaxInp = document.getElementById('params-max');
+    const lMinInp = document.getElementById('loss-min');
+    const lMaxInp = document.getElementById('loss-max');
+
+    let paramsNarrowed = false, pLo = null, pHi = null;
+    if (pMinInp && pMaxInp && filterBounds.paramsMin !== null && filterBounds.paramsMax > filterBounds.paramsMin) {
+        const a = parseFloat(pMinInp.value), b = parseFloat(pMaxInp.value);
+        pLo = Math.min(a, b); pHi = Math.max(a, b);
+        paramsNarrowed = pLo > filterBounds.paramsMin || pHi < filterBounds.paramsMax;
+    }
+
+    let lossNarrowed = false, lLo = null, lHi = null;
+    if (lMinInp && lMaxInp && filterBounds.lossMin !== null && filterBounds.lossMax > filterBounds.lossMin) {
+        const posA = parseFloat(lMinInp.value), posB = parseFloat(lMaxInp.value);
+        lLo = Math.min(lossSliderToValue(posA), lossSliderToValue(posB));
+        lHi = Math.max(lossSliderToValue(posA), lossSliderToValue(posB));
+        lossNarrowed = Math.min(posA, posB) > 0 || Math.max(posA, posB) < 1000;
+    }
+
+    const structuredActive = chVal !== 'any' || kVal !== 'any' || paramsNarrowed || lossNarrowed;
+
     methods.forEach(m => {
         const el = document.getElementById(`card_${m.id}`);
         if (!el) return;
         const hay = (m.title + ' ' + (m.desc || '') + ' '
                      + (m.tags || []).join(' ')).toLowerCase();
-        el.style.display = (!q || hay.includes(q)) ? 'block' : 'none';
+        let visible = (!q || hay.includes(q));
+
+        if (visible && structuredActive) {
+            const args = m.args;
+            if (!args) {
+                // No run.json yet: can't evaluate a narrowed filter against
+                // it, so hide it rather than guess.
+                visible = false;
+            } else {
+                if (chVal !== 'any' && String(args.C) !== chVal) visible = false;
+                if (visible && kVal !== 'any' && String(args.K) !== kVal) visible = false;
+                if (visible && paramsNarrowed) {
+                    const p = args.params;
+                    if (typeof p !== 'number' || p < pLo || p > pHi) visible = false;
+                }
+                if (visible && lossNarrowed) {
+                    const fl = m.finalLoss;
+                    if (typeof fl !== 'number' || fl < lLo || fl > lHi) visible = false;
+                }
+            }
+        }
+        el.style.display = visible ? 'block' : 'none';
     });
 }
 window.applyFilters = applyFilters;
+
+// ---------------------------------------------------------------------
+// Detail popup — built once in lenia.html (#lenia-modal) and repopulated
+// per card. Shows every args key/value, tags, loss stats, a large log-y
+// loss graph, the target image, and the latest COMP/KERNEL/COUPLING
+// snapshots, plus direct links into the bucket.
+// ---------------------------------------------------------------------
+
+function setModalImage(imgId, labelId, labelPrefix, src, step) {
+    const img = document.getElementById(imgId);
+    const label = labelId ? document.getElementById(labelId) : null;
+    if (!img) return;
+    if (src) {
+        img.onerror = function () { this.style.display = 'none'; };
+        img.style.display = '';
+        img.src = src;
+        if (label) label.innerText = step !== null && step !== undefined
+            ? `${labelPrefix} @ step ${step}` : labelPrefix;
+    } else {
+        img.style.display = 'none';
+        if (label) label.innerText = labelPrefix;
+    }
+}
+
+function openLeniaModal(id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    const m = methods.find(x => x.id === id);
+    if (!tr || !m) return;
+
+    document.getElementById('lm-title').innerText = m.title;
+    document.getElementById('lm-desc').innerText = m.desc || '(no run.json yet)';
+
+    const argsTbl = document.getElementById('lm-args');
+    argsTbl.innerHTML = '';
+    if (m.args && Object.keys(m.args).length) {
+        Object.keys(m.args).forEach(k => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td>${escapeHtml(k)}</td><td>${escapeHtml(String(m.args[k]))}</td>`;
+            argsTbl.appendChild(row);
+        });
+    } else {
+        argsTbl.innerHTML = '<tr><td style="color:#666;">no args recorded</td></tr>';
+    }
+
+    document.getElementById('lm-tags').innerText =
+        (m.tags && m.tags.length) ? m.tags.join(', ') : '(none)';
+
+    let statTxt = `final: ${fmtLoss(m.finalLoss)}\nmin: ${fmtLoss(m.minLoss)}`;
+    if (m.lossRel !== null && m.lossRel !== undefined) {
+        statTxt += `\nloss_rel: ${Number(m.lossRel).toFixed(6)}`;
+    }
+    document.getElementById('lm-loss-stats').innerText = statTxt;
+
+    document.getElementById('lm-links').innerHTML =
+        `<a href="${m.dir}run.json" target="_blank" rel="noopener" style="color:#4db8ff;">run.json</a>`
+        + ` &nbsp;·&nbsp; <a href="${m.dir}weights.json" target="_blank" rel="noopener" style="color:#4db8ff;">weights.json</a>`;
+
+    drawLossCurve(document.getElementById('lm-loss-canvas'), m.losses || [], { big: true });
+
+    const targetImg = document.getElementById('lm-target');
+    targetImg.onerror = function () { this.style.display = 'none'; };
+    targetImg.style.display = '';
+    targetImg.src = m.dir + 'target.png';
+
+    const lastComp = tr.compSteps.length ? tr.compSteps[tr.compSteps.length - 1] : null;
+    setModalImage('lm-comp', 'lm-comp-label', 'Latest COMP',
+        lastComp !== null ? `${tr.dir}COMP_${pad5(lastComp)}.png` : null, lastComp);
+
+    const lastKernel = tr.kernelSteps.length ? tr.kernelSteps[tr.kernelSteps.length - 1] : null;
+    setModalImage('lm-kernel', 'lm-kernel-label', 'Latest KERNEL',
+        lastKernel !== null ? `${tr.dir}KERNEL_${pad5(lastKernel)}.png` : null, lastKernel);
+
+    const lastCoupling = tr.couplingSteps.length ? tr.couplingSteps[tr.couplingSteps.length - 1] : null;
+    setModalImage('lm-coupling', 'lm-coupling-label', 'Latest COUPLING',
+        lastCoupling !== null ? `${tr.dir}COUPLING_${pad5(lastCoupling)}.png` : null, lastCoupling);
+
+    document.getElementById('lenia-modal').style.display = 'block';
+}
+window.openLeniaModal = openLeniaModal;
+
+window.closeLeniaModal = function () {
+    document.getElementById('lenia-modal').style.display = 'none';
+};
+
+window.handleLeniaOverlayClick = function () {
+    window.closeLeniaModal();
+};
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modalEl = document.getElementById('lenia-modal');
+    if (modalEl && modalEl.style.display === 'block') window.closeLeniaModal();
+});
 
 // ---------------------------------------------------------------------
 // Live trained-physics widget — steps the actual LeniaCA engine from a
