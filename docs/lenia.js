@@ -36,24 +36,30 @@ function mergeSteps(dst, src) {
 }
 
 async function listLeniaRuns(onPage) {
+    // Two-stage listing so we never page the whole bucket:
+    //   1. delimiter listing under prefix 'lenia-' -> just the run directory
+    //      names (one small request);
+    //   2. one per-run listing for its files, streamed as each arrives.
     const runs = {};
-    let pageToken = null;
-    do {
-        const res = await fetch(BUCKET_LIST + (pageToken ? `&pageToken=${pageToken}` : ''));
-        if (!res.ok) throw new Error(`bucket list failed: ${res.status}`);
+    const dirRes = await fetch(
+        `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
+        `?prefix=${RUN_PREFIX}&delimiter=/&fields=prefixes&maxResults=1000`);
+    if (!dirRes.ok) throw new Error(`bucket dir list failed: ${dirRes.status}`);
+    const dirs = ((await dirRes.json()).prefixes || []).map(p => p.slice(0, -1));
+
+    await Promise.all(dirs.map(async run => {
+        const res = await fetch(
+            `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
+            `?prefix=${encodeURIComponent(run + '/')}` +
+            `&fields=items(name,updated)&maxResults=1000`);
+        if (!res.ok) return;
         const d = await res.json();
+        const r = {
+            compSteps: [], kernelSteps: [], couplingSteps: [],
+            hasTarget: false, hasRunJson: false, updated: ''
+        };
         (d.items || []).forEach(({name, updated}) => {
-            const i = name.indexOf('/');
-            if (i < 0) return;
-            const run = name.slice(0, i), fname = name.slice(i + 1);
-            if (!run.startsWith(RUN_PREFIX)) return;   // Lenia runs only
-            if (!runs[run]) {
-                runs[run] = {
-                    compSteps: [], kernelSteps: [], couplingSteps: [],
-                    hasTarget: false, hasRunJson: false, updated: ''
-                };
-            }
-            const r = runs[run];
+            const fname = name.slice(run.length + 1);
             if (updated && updated > r.updated) r.updated = updated;
             const m = fname.match(/^(COMP|KERNEL|COUPLING)_(\d+)\.png$/);
             if (m) {
@@ -63,20 +69,15 @@ async function listLeniaRuns(onPage) {
                     else if (m[1] === 'KERNEL') r.kernelSteps.push(step);
                     else r.couplingSteps.push(step);
                 }
-            } else if (fname === 'target.png') {
-                r.hasTarget = true;
-            } else if (fname === 'run.json') {
-                r.hasRunJson = true;
-            }
+            } else if (fname === 'target.png') r.hasTarget = true;
+            else if (fname === 'run.json') r.hasRunJson = true;
         });
-        Object.values(runs).forEach(r => {
-            r.compSteps.sort((a, b) => a - b);
-            r.kernelSteps.sort((a, b) => a - b);
-            r.couplingSteps.sort((a, b) => a - b);
-        });
-        if (onPage) onPage(runs);   // stream cards page by page
-        pageToken = d.nextPageToken;
-    } while (pageToken);
+        r.compSteps.sort((a, b) => a - b);
+        r.kernelSteps.sort((a, b) => a - b);
+        r.couplingSteps.sort((a, b) => a - b);
+        runs[run] = r;
+        if (onPage) onPage(runs);   // stream cards as each run's listing lands
+    }));
     return runs;
 }
 
