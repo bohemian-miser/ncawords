@@ -260,6 +260,21 @@ def _lines(H, W, dirs, spacing, width):
     return out
 
 
+def word_target(text, H=64, W=64):
+    """Anchored word bitmap (letters + faint fan scaffold) centred on the
+    canvas, channel-0 alpha only. Words are positioned, not textures, so the
+    trainer switches to plain MSE for these."""
+    from nca.train_staged import render_word_3_line_fan
+    arr = render_word_3_line_fan(text, 12)          # [4,h,w]
+    a = arr[3]
+    h, w = a.shape
+    out = np.zeros((H, W), np.float32)
+    y0, x0 = max(0, (H - h) // 2), max(0, (W - w) // 2)
+    ys, xs = min(h, H), min(w, W)
+    out[y0:y0 + ys, x0:x0 + xs] = a[:ys, :xs]
+    return out
+
+
 def make_target(kind, H=64, W=64):
     if kind == "dots":
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
@@ -299,10 +314,40 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
     n_par = sum(p.numel() for p in model.parameters())
     print(f"Device {device}, {variant} C={C} K={K}, {n_par} physics params")
 
-    tgt = torch.from_numpy(make_target(target, size, size)).to(device)
-    tgt_spec = spec(tgt[None])
+    # word:<TEXT> targets are anchored bitmaps grown letter-by-letter
+    # (curriculum "C" -> "CO" -> ... gated on normalised loss); textures use
+    # the translation-invariant spectral loss.
+    is_word = target.startswith("word:")
+    if is_word:
+        full = target[5:]
+        stages = [full[:i + 1] for i in range(len(full))]
+        stage, stage_start = 0, 0
+        tgt = torch.from_numpy(word_target(stages[0], size, size)).to(device)
+    else:
+        tgt = torch.from_numpy(make_target(target, size, size)).to(device)
+    tgt_spec = None if is_word else spec(tgt[None])
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(steps * 0.85)], 0.1)
+
+    def loss_fn(x, t, ts):
+        if is_word:
+            return F.mse_loss(x[:, 0], t.expand(x.shape[0], -1, -1))
+        return F.mse_loss(spec(x[:, 0]), ts.expand(x.shape[0], -1, -1)) \
+            + 2.0 * (x[:, 0].mean() - t.mean()) ** 2
+
+    def make_init(t):
+        x = torch.rand(batch, C, size, size, device=device) * (0.15 if is_word else 0.6)
+        if is_word:
+            # bright blob at the fan origin (left-middle of the word)
+            cols = (t > 0.3).any(dim=0).nonzero()
+            x0c = int(cols.min()) if len(cols) else size // 2
+            x[:, :, size // 2 - 2:size // 2 + 3, max(0, x0c - 2):x0c + 3] = 1.0
+        return x
+
+    # loss of an untrained noise board: the normalisation baseline that makes
+    # losses comparable across targets ('loss_rel' = loss / baseline)
+    with torch.no_grad():
+        baseline = float(loss_fn(make_init(tgt), tgt, tgt_spec)) + 1e-8
 
     if snap_dir:
         Path(snap_dir).mkdir(parents=True, exist_ok=True)
@@ -314,8 +359,14 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     "rng_seed": rng_seed, "params": n_par},
                    C, 0, "noise", steps, device, tags=["lenia", variant, target])
 
-    start_step, _ = try_resume(snap_dir, model, opt, sched, device=device)
+    start_step, ck = try_resume(snap_dir, model, opt, sched, device=device)
+    if is_word and ck:
+        stage = min(ck.get("stage", 0), len(stages) - 1)
+        stage_start = ck.get("stage_start", 0)
+        tgt = torch.from_numpy(word_target(stages[stage], size, size)).to(device)
 
+    recent = []
+    stage_cap = max(1, int(steps / (len(stages) if is_word else 1) * 1.5))
     t0 = time.time()
     for step in range(start_step, steps):
         # growth-bump annealing: wide (easy gradients) -> trained width
@@ -323,19 +374,40 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         # horizon curriculum inside [t_min, t_max]
         hi = t_min + int((t_max - t_min) * min(1.0, step / (steps * 0.5)))
         T = int(torch.randint(t_min, hi + 1, (1,)))
-        x = torch.rand(batch, C, size, size, device=device) * 0.6
+        x = make_init(tgt)
         for _ in range(T):
             x = model.step(x, anneal)
-        loss = F.mse_loss(spec(x[:, 0]), tgt_spec.expand(batch, -1, -1)) \
-            + 2.0 * (x[:, 0].mean() - tgt.mean()) ** 2
+        loss = loss_fn(x, tgt, tgt_spec)
+        rel = loss.item() / baseline
 
         opt.zero_grad(); loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step(); sched.step()
 
+        if is_word:
+            recent.append(rel)
+            if len(recent) > 50:
+                recent.pop(0)
+            avg = sum(recent) / len(recent)
+            if stage < len(stages) - 1 and \
+                    ((len(recent) == 50 and avg < 0.22) or
+                     step - stage_start >= stage_cap):
+                stage += 1; stage_start = step; recent.clear()
+                print(f"=== word stage '{stages[stage]}' at step {step} "
+                      f"(avg rel {avg:.3f}) ===", flush=True)
+                tgt = torch.from_numpy(
+                    word_target(stages[stage], size, size)).to(device)
+                with torch.no_grad():
+                    baseline = float(loss_fn(make_init(tgt), tgt, None)) + 1e-8
+                if snap_dir:
+                    Image.fromarray(((1 - tgt.cpu().numpy()) * 255)
+                                    .astype(np.uint8)) \
+                        .resize((size * 5,) * 2, Image.NEAREST) \
+                        .save(Path(snap_dir) / "target.png")
+
         if step % log_every == 0 or step == steps - 1:
             print(f"[lenia-{variant}-{target}] step {step} loss {loss.item():.4f} "
-                  f"T {T} ({time.time() - t0:.1f}s)", flush=True)
+                  f"rel {rel:.3f} T {T} ({time.time() - t0:.1f}s)", flush=True)
             if snap_dir:
                 s = f"{step:05d}"
                 img = x[0, 0].detach().cpu().numpy()
@@ -356,15 +428,26 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     .resize((row.shape[1] * 6, row.shape[0] * 6), Image.NEAREST) \
                     .save(Path(snap_dir) / f"KERNEL_{s}.png")
                 if variant == "sharedk":
+                    # signed diverging colormap, zero pinned to mid-gray and
+                    # scale fixed by max|H| — an undifferentiated matrix reads
+                    # as neutral gray, not black (min-max on a flat matrix
+                    # rendered noise/black before)
                     Hm = torch.tanh(model.H).detach().cpu().numpy()
-                    Hn = (Hm - Hm.min()) / (Hm.ptp() + 1e-9)
-                    Image.fromarray((Hn * 255).astype(np.uint8)) \
-                        .resize((C * 24,) * 2, Image.NEAREST) \
+                    scale = max(1e-6, float(np.abs(Hm).max()))
+                    Hn = Hm / scale                       # [-1, 1]
+                    rgb = np.zeros((*Hm.shape, 3), np.uint8)
+                    rgb[..., 0] = (127 + 127 * np.clip(Hn, 0, 1)).astype(np.uint8)
+                    rgb[..., 2] = (127 + 127 * np.clip(-Hn, 0, 1)).astype(np.uint8)
+                    rgb[..., 1] = (127 * (1 - np.abs(Hn))).astype(np.uint8)
+                    Image.fromarray(rgb).resize((C * 24,) * 2, Image.NEAREST) \
                         .save(Path(snap_dir) / f"COUPLING_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
-                meta.log(step, loss.item())
+                meta.log(step, loss.item(), loss_rel=round(rel, 4),
+                         **({"word_stage": stages[stage]} if is_word else {}))
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):
-            save_checkpoint(snap_dir, step, model, opt, sched)
+            save_checkpoint(snap_dir, step, model, opt, sched,
+                            extra={"stage": stage, "stage_start": stage_start}
+                            if is_word else None)
 
     print(f"Final loss {loss.item():.4f}")
     return model
@@ -376,7 +459,7 @@ if __name__ == "__main__":
                    choices=["static1", "dyn1", "multik", "sharedk", "full",
                             "aniso", "wave", "dynwave"])
     p.add_argument("--target", default="dots",
-                   choices=["dots", "hex", "tri", "square"])
+                   help="dots|hex|tri|square or word:<TEXT> (letter curriculum)")
     p.add_argument("--channels", type=int, default=6)
     p.add_argument("--kernels", type=int, default=3)
     p.add_argument("--steps", type=int, default=6000)

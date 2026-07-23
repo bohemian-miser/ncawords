@@ -58,6 +58,37 @@ def render_word_3_line(text, glyph=12):
     return arr.transpose(2, 0, 1)  # [4,h,w]
 
 
+def render_word_3_line_fan(text, glyph=12):
+    """Word with three strands fanning from one origin: all start at the
+    middle-left of the first char; the middle strand runs horizontal, the
+    top/bottom strands fan out to the top-right/bottom-right corner of the
+    last char. The convergence point doubles as a natural seed site."""
+    w = MARGIN * 2 + PITCH * len(text)
+    h = GRID_H
+    font = ImageFont.truetype(FONT_PATH, glyph)
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    boxes = []
+    for i, ch in enumerate(text):
+        xc = MARGIN + PITCH * i + PITCH // 2
+        l, t, r, b = draw.textbbox((0, 0), ch, font=font)
+        x = xc - (r - l) / 2 - l
+        y = (h - (b - t)) / 2 - t
+        boxes.append((x + l, y + t, x + r, y + b, ch, x, y))
+    top = min(b[1] for b in boxes)
+    bot = max(b[3] for b in boxes)
+    mid = (top + bot) / 2
+    x0, x1 = boxes[0][0], boxes[-1][2]
+    origin = (x0, mid)
+    for end in ((x1, top), (x1, mid), (x1, bot)):
+        draw.line((*origin, *end), fill=(128, 128, 128, 64))
+    for (L, T, R, B, ch, x, y) in boxes:
+        draw.text((x, y), ch, font=font, fill=char_color(ch) + (255,))
+    arr = np.asarray(img, dtype=np.float32) / 255.0
+    arr[..., :3] *= arr[..., 3:]
+    return arr.transpose(2, 0, 1)  # [4,h,w]
+
+
 def make_seed(tgt, channel_n):
     _, h, w = tgt.shape
     x = torch.zeros(1, channel_n, h, w)

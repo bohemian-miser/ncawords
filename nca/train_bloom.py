@@ -32,7 +32,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from nca.model import NCA, to_rgba
-from nca.train_staged import render_word_3_line, make_seed
+from nca.train_staged import render_word_3_line, render_word_3_line_fan, make_seed
 from nca.train_web_hidden import render_word_9_line, damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
@@ -84,6 +84,8 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
 
     if scaffold == "3line":
         tgt_np = render_word_3_line(text, glyph)
+    elif scaffold == "fan3":
+        tgt_np = render_word_3_line_fan(text, glyph)
     else:
         tgt_np = render_word_9_line(text, glyph, char_alpha=255, strand_alpha=0)
     _, h, w = tgt_np.shape
@@ -192,7 +194,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--text", default="COMP")
     p.add_argument("--steps", type=int, default=12000)
-    p.add_argument("--scaffold", default="none", choices=["none", "3line"])
+    p.add_argument("--scaffold", default="none", choices=["none", "3line", "fan3"])
     p.add_argument("--no-bloom", dest="bloom", action="store_false")
     p.add_argument("--bloom-noise", type=float, default=0.05)
     p.add_argument("--mist-alpha", type=float, default=0.15)
