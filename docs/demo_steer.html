@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An interactive demo of gradient-modulated Lenia kernels: cells sense the gradient of a repellent field and shift their kernel's focus away from it, steering a living blob by kernel-space chemotaxis.">
+<title>Glider Steering Demo &mdash; Gradient-Modulated Kernels</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* demo-page-only additions, layered on top of style.css */
+  .demo-stage {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 0.5rem 0;
+  }
+  #steer-canvas {
+    width: 480px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    background: #fff;
+    border: 1px solid var(--cell-border);
+    border-radius: 6px;
+    cursor: crosshair;
+    touch-action: none;
+    max-width: 100%;
+    height: auto;
+  }
+  .kernel-inset { text-align: center; }
+  .kernel-inset canvas {
+    width: 120px;
+    height: 120px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #fff;
+    border: 1px solid var(--cell-border);
+    border-radius: 4px;
+    display: block;
+    margin: 0 auto 0.5rem;
+  }
+  .kernel-inset-label {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+    max-width: 130px;
+    margin: 0 auto;
+    line-height: 1.4;
+  }
+
+  .demo-legend {
+    text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0.7rem 0 1.1rem;
+  }
+
+  .demo-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1.1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--rule);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+  }
+  .ctl-group {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-soft);
+  }
+  .ctl-group label { white-space: nowrap; }
+  .ctl-group input[type="range"] { width: 100px; accent-color: var(--accent); }
+
+  #demo-status {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    text-align: center;
+    min-height: 1.2em;
+  }
+
+  .more-demos {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    text-align: center;
+    margin: 1.4rem 0 0;
+  }
+
+  @media (max-width: 540px) {
+    #steer-canvas { width: 100%; }
+    .ctl-group input[type="range"] { width: 70px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="sitenav" aria-label="Site">
+  <a href="index.html">Article</a>
+  <a href="dashboard.html">Experiment gallery</a>
+  <a href="research.html">Research log</a>
+  <a href="lenia.html">Lenia lab</a>
+</nav>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Interactive demo</p>
+    <h1>Steering a Glider by Gradient-Modulated Kernels</h1>
+    <p class="subtitle">
+      A cell&rsquo;s kernel doesn&rsquo;t have to be fixed &mdash; it can
+      respond to the state. Here every cell senses the local gradient of a
+      second channel B, a &ldquo;repellent&rdquo; field emitted by a red dot
+      you place, and shifts its kernel&rsquo;s focus <em>away</em> from
+      uphill-B. The living blob flees the dot: chemotaxis implemented purely
+      by kernel-space steering.
+    </p>
+  </div>
+</header>
+
+<div class="article-column">
+  <p>
+    The mechanism is a dipole decomposition of a trained kernel
+    <code>K&#8320;</code>. We pre-weight it by the cosine and sine of the
+    stencil angle to get two basis kernels <code>K&#8339;</code> and
+    <code>K&#8341;</code>, then let each cell compose an effective kernel
+    <code>K&#8320; + a&middot;(s&#8339;K&#8339; + s&#8341;K&#8341;)</code>,
+    where <code>s = (s&#8339;, s&#8341;)</code> is the unit vector pointing
+    down B&rsquo;s gradient, weighted by gradient strength. The effect is a
+    kernel whose mass leans away from the dot, so growth is sensed &mdash;
+    and produced &mdash; on the far side, and the pattern drifts off in that
+    direction. The physics itself (three 15&times;15 kernels, growth
+    heights, &mu;, &sigma;) is a trained <code>multik</code> run, untouched.
+  </p>
+  <p>
+    This is the hand-built version of what our <code>dynwave</code> variant
+    learns end-to-end: there, a small network reads local state and composes
+    the kernel from a basis per cell, per step. Here the composition rule is
+    written by hand so you can watch it work.
+  </p>
+</div>
+
+<div class="figure-column">
+  <figure id="steer-figure">
+    <p class="figure-title">Place the repellent, watch the blob flee</p>
+
+    <div class="demo-stage">
+      <canvas id="steer-canvas" width="480" height="480" aria-label="Lenia state with repellent field, click or drag to move the red dot"></canvas>
+      <div class="kernel-inset">
+        <canvas id="kernel-canvas" width="15" height="15"></canvas>
+        <div class="kernel-inset-label">kernel at the blob (leaning away)</div>
+      </div>
+    </div>
+
+    <p class="demo-legend">
+      click to move the repellent dot &mdash; the blob&rsquo;s kernels lean away from its gradient
+    </p>
+    <p id="demo-status">loading trained physics&hellip;</p>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <button id="btn-play">Pause</button>
+        <button id="btn-reset">Reset blob</button>
+      </span>
+      <span class="ctl-group">
+        <label for="strength">steer strength a</label>
+        <input id="strength" type="range" min="0" max="1.5" step="0.05" value="0.8">
+        <span id="strength-val">0.80</span>
+      </span>
+      <span class="ctl-group">
+        <label for="sigma">dot &sigma;</label>
+        <input id="sigma" type="range" min="8" max="24" step="1" value="14">
+        <span id="sigma-val">14</span>
+      </span>
+      <span class="speed-group">
+        <label for="speed">speed</label>
+        <input id="speed" type="range" min="0.25" max="4" step="0.25" value="1">
+        <span id="speed-val">1&times;</span>
+      </span>
+      <span class="status-group">
+        <span>step <span id="step-counter">0</span></span>
+      </span>
+    </div>
+
+    <figcaption>
+      <b>Chemotaxis without a chemistry.</b> Channel A (ink) is stepped by a
+      trained 3-kernel Lenia physics; channel B (red haze) is a static
+      Gaussian around the dot. Per step, each cell correlates A with
+      <code>K&#8320;</code>, <code>K&#8339;</code>, <code>K&#8341;</code> for
+      every kernel, mixes the three results using its local steering vector
+      <code>s = &minus;&nabla;B/|&nabla;B|</code> (saturated by gradient
+      strength), and feeds the resulting potential through the usual growth
+      function. B never adds or removes mass in A &mdash; it only tilts where
+      each cell looks. Set strength to 0 to recover the plain, unsteered
+      physics.
+    </figcaption>
+
+    <p class="more-demos">More demos: <a href="demo_modulation.html">kernel modulation &harr;</a></p>
+  </figure>
+</div>
+
+<footer>
+  <div class="article-column">
+    <p>
+      Kernels and weights are read live from a public training bucket, the
+      same source the <a href="lenia.html">Lenia lab</a> gallery uses. See
+      the <a href="research.html">research log</a> for how this physics was
+      trained.
+    </p>
+    <a href="lenia.html">&larr; Lenia lab</a> &middot;
+    <a href="research.html">Research log &rarr;</a>
+  </div>
+</footer>
+
+<script type="module" src="demo_steer.js"></script>
+</body>
+</html>
