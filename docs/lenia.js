@@ -4,11 +4,17 @@
 // per-run content is different (COMP pattern snapshots, learned KERNEL
 // tile strips, optional COUPLING heatmaps, target.png, run.json).
 //
-// NOTE: this page only *plays back* pre-rendered PNG snapshots written by
-// the training job's WebGL engine. It does not simulate Lenia physics in
-// JavaScript — the WebGL engine runs a different update rule than a naive
-// JS port would reproduce, so a from-scratch, in-browser Lenia simulator
-// matching the trainable variant is left as a separate future task.
+// The COMP training-snapshot animation, the KERNEL tile strip and the
+// COUPLING heatmap all share one timeline: scrubbing/playing the COMP
+// animation re-picks the nearest KERNEL/COUPLING frame at or before the
+// current step, so "learned kernels" visibly evolve in sync with training.
+//
+// Each card also offers a "Run live" widget that fetches the run's
+// exported weights.json and steps the actual trained Lenia physics in the
+// browser via lenia_engine.js (LeniaCA) — a real from-scratch simulator,
+// distinct from the pre-rendered PNG timelapse above it.
+
+import { LeniaCA } from './lenia_engine.js';
 
 let methods = [];
 let cardTrackers = [];
@@ -146,6 +152,20 @@ function renderStatus(tr) {
     statusObj.innerText = text;
 }
 
+// Nearest step <= target in an ascending-sorted array; falls back to the
+// smallest available step if every recorded step is after `target` (e.g.
+// the kernel snapshot cadence is coarser than the COMP cadence and hasn't
+// produced a frame yet at low steps).
+function nearestStepAtOrBelow(steps, target) {
+    if (!steps.length) return null;
+    let best = null;
+    for (const s of steps) {
+        if (s <= target) best = s;
+        else break;
+    }
+    return best === null ? steps[0] : best;
+}
+
 function renderFrame(tr) {
     if (!tr.compSteps.length) return;
     tr.frameIdx = Math.max(0, Math.min(tr.frameIdx, tr.compSteps.length - 1));
@@ -156,22 +176,42 @@ function renderFrame(tr) {
     }
     if (tr.scrubObj) tr.scrubObj.value = tr.frameIdx;
     if (tr.frameLabelObj) tr.frameLabelObj.innerText = `step ${step}`;
+    renderKernelFrame(tr, step);
 }
 
-function updateLatestExtras(tr) {
-    if (tr.kernelSteps.length && tr.kernelObj) {
-        const step = tr.kernelSteps[tr.kernelSteps.length - 1];
-        tr.kernelObj.style.display = '';
-        tr.kernelObj.onerror = function () { this.style.display = 'none'; };
-        tr.kernelObj.src = `${tr.dir}KERNEL_${pad5(step)}.png?t=` + Date.now();
+// Keeps the KERNEL/COUPLING images locked to the same timeline position as
+// the COMP animation: whatever step COMP is showing, show the nearest
+// kernel/coupling snapshot at or before that step.
+function renderKernelFrame(tr, compStep) {
+    const kStep = nearestStepAtOrBelow(tr.kernelSteps, compStep);
+    if (tr.kernelObj) {
+        if (kStep !== null) {
+            tr.kernelObj.style.display = '';
+            tr.kernelObj.onerror = function () { this.style.display = 'none'; };
+            tr.kernelObj.src = `${tr.dir}KERNEL_${pad5(kStep)}.png`;
+        } else {
+            tr.kernelObj.style.display = 'none';
+        }
     }
-    if (tr.couplingSteps.length && tr.couplingObj) {
-        const step = tr.couplingSteps[tr.couplingSteps.length - 1];
-        tr.couplingObj.style.display = '';
-        tr.couplingObj.onerror = function () { this.style.display = 'none'; };
-        tr.couplingObj.src = `${tr.dir}COUPLING_${pad5(step)}.png?t=` + Date.now();
+    if (tr.kernelLabelObj) {
+        tr.kernelLabelObj.innerText = kStep !== null
+            ? `learned kernels @ step ${kStep}` : 'learned kernels';
     }
-    renderStatus(tr);
+
+    const cStep = nearestStepAtOrBelow(tr.couplingSteps, compStep);
+    if (tr.couplingObj) {
+        if (cStep !== null) {
+            tr.couplingObj.style.display = '';
+            tr.couplingObj.onerror = function () { this.style.display = 'none'; };
+            tr.couplingObj.src = `${tr.dir}COUPLING_${pad5(cStep)}.png`;
+        } else {
+            tr.couplingObj.style.display = 'none';
+        }
+    }
+    if (tr.couplingLabelObj) {
+        tr.couplingLabelObj.innerText = cStep !== null
+            ? `channel coupling @ step ${cStep}` : 'channel coupling';
+    }
 }
 
 function updateScrubRange(tr) {
@@ -224,11 +264,11 @@ function buildCard(m) {
         </div>
         <div class="kernel-row">
             <div>
-                <div class="sub-desc">Learned kernels</div>
+                <div class="sub-desc" id="kernel_label_${m.id}">learned kernels</div>
                 <div class="img-container"><img loading="lazy" id="kernel_${m.id}" style="display:none;"></div>
             </div>
             <div>
-                <div class="sub-desc">Channel coupling</div>
+                <div class="sub-desc" id="coupling_label_${m.id}">channel coupling</div>
                 <div class="img-container"><img loading="lazy" id="coupling_${m.id}" style="display:none;"></div>
             </div>
         </div>
@@ -237,6 +277,22 @@ function buildCard(m) {
             <div class="img-container"><img loading="lazy" id="target_${m.id}" src="${m.dir}target.png" onerror="this.style.display='none'"></div>
         </div>
         <div class="status" id="status_${m.id}">Loading…</div>
+        <div class="lenia-live-toggle">
+            <button id="livetoggle_${m.id}">&#9654; Run live</button>
+        </div>
+        <div class="lenia-live" id="live_${m.id}" style="display:none;">
+            <div class="sub-desc">live trained physics</div>
+            <div class="live-canvas-wrap">
+                <canvas id="livecanvas_${m.id}" width="64" height="64"></canvas>
+            </div>
+            <div class="lenia-controls">
+                <button id="liveplay_${m.id}" title="Play/pause live simulation">&#9654;</button>
+                <button id="livereset_${m.id}" title="Reset to random noise">Reset noise</button>
+                <button id="liveclear_${m.id}" title="Clear to empty">Clear</button>
+                <label style="margin-left:6px;">speed <input type="range" id="livespeed_${m.id}" min="0.1" max="10" step="0.1" value="1" style="width:60px;"></label>
+            </div>
+            <div class="run-desc" id="livestatus_${m.id}"></div>
+        </div>
     `;
     container.appendChild(card);
 
@@ -255,18 +311,45 @@ function buildCard(m) {
         imgObj: card.querySelector(`#comp_${esc}`),
         kernelObj: card.querySelector(`#kernel_${esc}`),
         couplingObj: card.querySelector(`#coupling_${esc}`),
+        kernelLabelObj: card.querySelector(`#kernel_label_${esc}`),
+        couplingLabelObj: card.querySelector(`#coupling_label_${esc}`),
         scrubObj: card.querySelector(`#scrub_${esc}`),
         speedObj: card.querySelector(`#speed_${esc}`),
         frameLabelObj: card.querySelector(`#frame_${esc}`),
         statusObj: card.querySelector(`#status_${esc}`),
-        playBtn: card.querySelector(`#play_${esc}`)
+        playBtn: card.querySelector(`#play_${esc}`),
+        // --- live physics widget state ---
+        liveToggleBtn: card.querySelector(`#livetoggle_${esc}`),
+        liveSecObj: card.querySelector(`#live_${esc}`),
+        liveCanvas: card.querySelector(`#livecanvas_${esc}`),
+        livePlayBtn: card.querySelector(`#liveplay_${esc}`),
+        liveSpeedObj: card.querySelector(`#livespeed_${esc}`),
+        liveStatusObj: card.querySelector(`#livestatus_${esc}`),
+        liveCA: null,
+        liveImgData: null,
+        liveTimer: null,
+        liveStepAccum: 0,
+        livePaused: false,
+        liveDamaging: false
     };
     tr.playBtn.onclick = () => window.togglePlay(m.id);
     tr.scrubObj.oninput = (e) => window.scrubTo(m.id, e.target.value);
 
+    tr.liveCtx = tr.liveCanvas.getContext('2d');
+    tr.liveToggleBtn.onclick = () => activateOrCollapseLive(tr);
+    tr.livePlayBtn.onclick = () => window.toggleLivePause(m.id);
+    tr.liveresetBtn = card.querySelector(`#livereset_${esc}`);
+    tr.liveresetBtn.onclick = () => window.liveResetNoise(m.id);
+    tr.liveclearBtn = card.querySelector(`#liveclear_${esc}`);
+    tr.liveclearBtn.onclick = () => window.liveClear(m.id);
+    tr.liveCanvas.addEventListener('mousedown', (e) => { tr.liveDamaging = true; liveDamageAt(tr, e); });
+    tr.liveCanvas.addEventListener('mousemove', (e) => { if (tr.liveDamaging) liveDamageAt(tr, e); });
+    tr.liveCanvas.addEventListener('mouseup', () => { tr.liveDamaging = false; });
+    tr.liveCanvas.addEventListener('mouseleave', () => { tr.liveDamaging = false; });
+
     updateScrubRange(tr);
     renderFrame(tr);
-    updateLatestExtras(tr);
+    renderStatus(tr);
     fetchRunJson(tr, m);
 
     cardTrackers.push(tr);
@@ -281,14 +364,19 @@ function addOrUpdateCards(list) {
             const known = methods.find(x => x.id === m.id);
             if (tr) {
                 const gotComp = mergeSteps(tr.compSteps, m.compSteps);
-                mergeSteps(tr.kernelSteps, m.kernelSteps);
-                mergeSteps(tr.couplingSteps, m.couplingSteps);
+                const gotKernel = mergeSteps(tr.kernelSteps, m.kernelSteps);
+                const gotCoupling = mergeSteps(tr.couplingSteps, m.couplingSteps);
                 updateScrubRange(tr);
                 if (gotComp && !tr.playTimer) {
                     tr.frameIdx = tr.compSteps.length - 1;   // jump to latest
-                    renderFrame(tr);
+                    renderFrame(tr);   // also re-syncs kernel/coupling frame
+                } else if ((gotKernel || gotCoupling) && tr.compSteps.length) {
+                    // New kernel/coupling snapshots landed without a new COMP
+                    // frame (or while paused mid-scrub) — resync at the step
+                    // currently on screen rather than jumping the timeline.
+                    renderKernelFrame(tr, tr.compSteps[tr.frameIdx]);
                 }
-                updateLatestExtras(tr);
+                renderStatus(tr);
             }
             if (known && m.updated && m.updated !== known.updated) {
                 known.updated = m.updated;
@@ -336,6 +424,120 @@ function applyFilters() {
     });
 }
 window.applyFilters = applyFilters;
+
+// ---------------------------------------------------------------------
+// Live trained-physics widget — steps the actual LeniaCA engine from a
+// run's exported weights.json, distinct from the pre-rendered PNG
+// timelapse above it in the card. Only one card's simulation runs at a
+// time: activating one stops whichever other card's loop was running.
+// ---------------------------------------------------------------------
+
+let currentLiveTr = null;   // module-level: the one card currently ticking
+
+function stopLiveLoop(tr) {
+    if (tr.liveTimer) { clearTimeout(tr.liveTimer); tr.liveTimer = null; }
+    if (tr.livePlayBtn) tr.livePlayBtn.innerText = '▶';
+}
+
+function drawLive(tr) {
+    if (!tr.liveCA || !tr.liveImgData) return;
+    const out = tr.liveCA.readRGBA(tr.liveImgData.data);
+    if (out && out !== tr.liveImgData.data) tr.liveImgData.data.set(out);
+    tr.liveCtx.putImageData(tr.liveImgData, 0, 0);
+}
+
+function runLiveLoop(tr) {
+    if (!tr.liveCA || tr.livePaused) return;
+    // Fractional speeds (< 1 step/tick) accumulate across ticks, mirroring
+    // the dashboard's interactive-widget loop (nca_viewer.js).
+    tr.liveStepAccum += parseFloat(tr.liveSpeedObj?.value || '1');
+    const steps = Math.floor(tr.liveStepAccum);
+    tr.liveStepAccum -= steps;
+    for (let i = 0; i < steps; i++) tr.liveCA.step();
+    if (steps > 0) drawLive(tr);
+    tr.liveTimer = setTimeout(() => runLiveLoop(tr), 30);
+}
+
+async function activateOrCollapseLive(tr) {
+    const isOpen = tr.liveSecObj.style.display !== 'none' && tr.liveSecObj.style.display !== '';
+    if (isOpen) {
+        stopLiveLoop(tr);
+        tr.liveSecObj.style.display = 'none';
+        tr.liveToggleBtn.innerText = '▶ Run live';
+        if (currentLiveTr === tr) currentLiveTr = null;
+        return;
+    }
+
+    // Only one live widget runs at a time.
+    if (currentLiveTr && currentLiveTr !== tr) {
+        stopLiveLoop(currentLiveTr);
+        currentLiveTr.liveSecObj.style.display = 'none';
+        currentLiveTr.liveToggleBtn.innerText = '▶ Run live';
+    }
+    currentLiveTr = tr;
+
+    tr.liveSecObj.style.display = 'block';
+    tr.liveToggleBtn.innerText = '▼ Hide live';
+    tr.livePaused = false;
+    if (tr.livePlayBtn) tr.livePlayBtn.innerText = '⏸';
+
+    if (tr.liveCA) {   // already loaded from a previous activation — resume
+        tr.liveStatusObj.innerText = 'live trained physics — click/drag to damage';
+        runLiveLoop(tr);
+        return;
+    }
+
+    tr.liveStatusObj.innerText = 'loading weights…';
+    try {
+        const res = await fetch(tr.dir + 'weights.json?t=' + Date.now());
+        if (!res.ok) {
+            tr.liveStatusObj.innerText = 'weights not exported yet';
+            return;
+        }
+        const weights = await res.json();
+        tr.liveCA = new LeniaCA(weights, 64);
+        tr.liveImgData = tr.liveCtx.createImageData(64, 64);
+        tr.liveCanvas.style.imageRendering = 'pixelated';
+        tr.liveStepAccum = 0;
+        drawLive(tr);
+        tr.liveStatusObj.innerText = 'live trained physics — click/drag to damage';
+        runLiveLoop(tr);
+    } catch (e) {
+        console.error('live physics load failed', e);
+        tr.liveStatusObj.innerText = 'weights not exported yet';
+    }
+}
+
+window.toggleLivePause = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.liveCA) return;
+    tr.livePaused = !tr.livePaused;
+    if (tr.livePlayBtn) tr.livePlayBtn.innerText = tr.livePaused ? '▶' : '⏸';
+    if (tr.livePaused) stopLiveLoop(tr); else runLiveLoop(tr);
+};
+
+window.liveResetNoise = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.liveCA) return;
+    tr.liveCA.reset(true);
+    drawLive(tr);
+};
+
+window.liveClear = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.liveCA) return;
+    tr.liveCA.reset(false);
+    drawLive(tr);
+};
+
+function liveDamageAt(tr, e) {
+    if (!tr.liveCA) return;
+    const rect = tr.liveCanvas.getBoundingClientRect();
+    const normX = (e.clientX - rect.left) / rect.width;
+    const normY = (e.clientY - rect.top) / rect.height;
+    tr.liveCA.damage(normX * 64, normY * 64, 6);
+    drawLive(tr);
+}
 
 async function refreshRuns() {
     try {

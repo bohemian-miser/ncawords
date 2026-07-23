@@ -19,6 +19,12 @@
   .target-row { margin-top:10px; }
   .target-row .img-container { height:90px; width:90px; margin:0 auto; }
   .run-desc { font-size:0.8em; color:#888; margin-top:4px; min-height:1.1em; }
+  .lenia-live-toggle { margin-top:12px; }
+  .lenia-live-toggle button { padding:4px 10px; background:#2d6a4f; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold; }
+  .lenia-live-toggle button:hover { background:#37835f; }
+  .lenia-live { margin-top:10px; padding-top:10px; border-top:1px dashed #444; }
+  .live-canvas-wrap { display:inline-block; position:relative; background:#000; border:2px solid #444; border-radius:4px; }
+  .lenia-live canvas { width:256px; height:256px; image-rendering:pixelated; cursor:crosshair; display:block; }
 </style>
 </head>
 <body>
@@ -38,13 +44,15 @@
 </p>
 
 <!--
-  NOTE: this page only *plays back* pre-rendered COMP / KERNEL / COUPLING
-  PNG snapshots that the training job's WebGL engine writes to the bucket.
-  It does not re-implement Lenia physics in JavaScript — the WebGL engine
-  used for training runs a different (and much faster) update rule than a
-  naive JS port would, so a from-scratch, in-browser Lenia simulator that
-  matches the trainable variant is left as a separate future task, not
-  attempted here.
+  Each card's main image row *plays back* pre-rendered COMP / KERNEL /
+  COUPLING PNG snapshots that the training job's WebGL engine writes to
+  the bucket, all driven by one shared timeline (scrubbing/playing COMP
+  re-syncs the nearest KERNEL/COUPLING frame at or before that step).
+
+  The "Run live" section per card is a separate, real in-browser
+  simulator (lenia_engine.js / LeniaCA) that steps the run's exported
+  weights.json directly, reproducing the trained physics from scratch
+  rather than replaying snapshots.
 -->
 
 <!-- Filter Controls -->
@@ -59,7 +67,7 @@
 
 <div id="cards-container"></div>
 
-<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-1</div>
-<script src="lenia.js?v=lenia-1"></script>
+<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-2</div>
+<script type="module" src="lenia.js?v=lenia-2"></script>
 </body>
 </html>
