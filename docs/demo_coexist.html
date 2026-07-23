@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An interactive demo where two independently-trained Growing-NCA organisms share one grid: a painted control field decides, per cell, which organism's learned update rule runs.">
+<title>Coexistence Demo &mdash; Two Organisms, One World</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* demo-page-only additions, layered on top of style.css */
+  .demo-canvas-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0;
+    overflow-x: auto;
+  }
+  #demo-canvas {
+    width: 480px;
+    height: 480px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    background: #fff;
+    border: 1px solid var(--cell-border);
+    border-radius: 6px;
+    cursor: crosshair;
+    touch-action: none;
+    max-width: 100%;
+    height: auto;
+  }
+
+  .demo-legend {
+    text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0.7rem 0 1.1rem;
+  }
+
+  .demo-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1.1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--rule);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+  }
+  .demo-controls + .demo-controls { border-top: none; padding-top: 0; }
+
+  .ctl-group {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-soft);
+  }
+  .ctl-group label { white-space: nowrap; }
+  .ctl-group input[type="range"] { width: 100px; accent-color: var(--accent); }
+  .ctl-group select {
+    font-family: inherit;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--btn-bg);
+    border: 1px solid var(--btn-border);
+    border-radius: 6px;
+    padding: 0.32rem 0.5rem;
+  }
+  .ctl-group input[type="checkbox"] { accent-color: var(--accent); }
+
+  .preset-group { display: flex; gap: 0.4rem; }
+  .preset-group button { font-size: 0.78rem; padding: 0.36rem 0.7rem; }
+
+  #demo-status {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+    text-align: center;
+    min-height: 1.2em;
+  }
+  #btn-retry { font-size: 0.78rem; padding: 0.36rem 0.7rem; margin-left: 0.5rem; }
+  #btn-retry[hidden] { display: none; }
+
+  @media (max-width: 540px) {
+    #demo-canvas { width: 100%; }
+    .ctl-group input[type="range"] { width: 70px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="sitenav" aria-label="Site">
+  <a href="index.html">Article</a>
+  <a href="dashboard.html">Experiment gallery</a>
+  <a href="research.html">Research log</a>
+  <a href="lenia.html">Lenia lab</a>
+  <a href="demo_modulation.html" aria-current="page">Demos</a>
+</nav>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Interactive demo</p>
+    <h1>Two Organisms, One World</h1>
+    <p class="subtitle">
+      Two independently-trained Growing-NCA organisms &mdash; say a lizard
+      and a spiderweb &mdash; share <em>one</em> 16-channel grid. A control
+      field B, painted by hand, chooses per cell which organism&rsquo;s
+      learned update rule runs. Seeds planted in each region grow their own
+      creature; at painted boundaries the two rule-sets negotiate.
+    </p>
+  </div>
+</header>
+
+<div class="article-column">
+  <p>
+    Each organism is a Growing Neural Cellular Automaton: a tiny network,
+    trained end-to-end, that reads a cell&rsquo;s 3&times;3 neighborhood
+    (identity + Sobel filters over all 16 channels) and outputs a state
+    update <code>dx</code>. Normally one such rule governs the whole grid.
+    Here <em>both</em> rules are evaluated at every cell on the exact same
+    shared state, and the painted field B mixes their outputs:
+  </p>
+  <p style="text-align:center"><code>dx = (1 &minus; B)&thinsp;&middot;&thinsp;dx<sub>A</sub> + B&thinsp;&middot;&thinsp;dx<sub>B</sub></code></p>
+  <p>
+    Where B&nbsp;&asymp;&nbsp;0 the first organism&rsquo;s physics applies;
+    where B&nbsp;&asymp;&nbsp;1 the second&rsquo;s. Neither network was ever
+    trained to see the other &mdash; whatever happens at a painted boundary
+    is pure negotiation between two rule-sets that each think they own the
+    world.
+  </p>
+</div>
+
+<div class="figure-column">
+  <figure id="demo-figure">
+    <p class="figure-title">Paint who rules where, then plant seeds</p>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <label for="tool-select">tool</label>
+        <select id="tool-select">
+          <option value="paint" selected>paint B</option>
+          <option value="damage">damage</option>
+        </select>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-radius">brush radius</label>
+        <input id="brush-radius" type="range" min="2" max="20" step="1" value="8">
+        <span id="brush-radius-val">8</span>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-value">brush value</label>
+        <input id="brush-value" type="range" min="0" max="1" step="0.05" value="1">
+        <span id="brush-value-val">1.00</span>
+      </span>
+      <span class="ctl-group">
+        <label for="brush-erase">erase (or right-drag)</label>
+        <input id="brush-erase" type="checkbox">
+      </span>
+      <span class="ctl-group">
+        <label for="tint-toggle">show B tint</label>
+        <input id="tint-toggle" type="checkbox" checked>
+      </span>
+    </div>
+
+    <div class="demo-canvas-wrap">
+      <canvas id="demo-canvas" width="64" height="64" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
+    </div>
+    <p class="demo-legend">
+      B=0 &rarr; organism A&rsquo;s rule (blue tint) &middot; B=1 &rarr; organism B&rsquo;s rule (red tint) &mdash; paint to choose who rules where
+    </p>
+    <p id="demo-status">loading trained organisms&hellip;<button id="btn-retry" hidden>Retry</button></p>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <button id="btn-play">Pause</button>
+        <button id="btn-seeds">Plant seeds</button>
+      </span>
+      <span class="preset-group">
+        <button id="btn-b-halves">B: left | right</button>
+        <button id="btn-b-zero">B: all A</button>
+        <button id="btn-b-one">B: all B</button>
+      </span>
+      <span class="ctl-group">
+        <label for="speed">speed</label>
+        <input id="speed" type="range" min="0.25" max="2" step="0.25" value="1">
+        <span id="speed-label">1&times;</span>
+      </span>
+      <span class="ctl-group">
+        <span>step <span id="step-counter">0</span></span>
+      </span>
+    </div>
+
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <label for="model-a">organism A (B=0)</label>
+        <select id="model-a">
+          <option value="vanilla-lizard" selected>vanilla-lizard</option>
+          <option value="vanilla-web">vanilla-web</option>
+          <option value="vanilla-smiley">vanilla-smiley</option>
+          <option value="vanilla-butterfly">vanilla-butterfly</option>
+          <option value="vanilla-mushroom">vanilla-mushroom</option>
+          <option value="vanilla-rocket">vanilla-rocket</option>
+        </select>
+      </span>
+      <span class="ctl-group">
+        <label for="model-b">organism B (B=1)</label>
+        <select id="model-b">
+          <option value="vanilla-lizard">vanilla-lizard</option>
+          <option value="vanilla-web" selected>vanilla-web</option>
+          <option value="vanilla-smiley">vanilla-smiley</option>
+          <option value="vanilla-butterfly">vanilla-butterfly</option>
+          <option value="vanilla-mushroom">vanilla-mushroom</option>
+          <option value="vanilla-rocket">vanilla-rocket</option>
+        </select>
+      </span>
+    </div>
+
+    <figcaption>
+      <b>One state, two laws.</b> Both models were trained separately, each
+      to grow its own emoji from a single seed on its own grid. This page
+      runs them on a <em>shared</em> state: every step, each cell perceives
+      its neighborhood once, both networks propose an update from that same
+      perception, and the painted field B mixes the two proposals before a
+      shared stochastic fire mask applies the result. Painting B never
+      touches the state directly &mdash; it only changes which learned law a
+      cell lives under. The damage tool erases a disk of state so you can
+      watch each region regrow under its own rule.
+    </figcaption>
+    <p class="demo-legend" style="margin-top:1.4rem">More demos: <a href="demo_modulation.html">kernel modulation &harr;</a> &middot; <a href="demo_steer.html">glider steering &harr;</a></p>
+  </figure>
+</div>
+
+<footer>
+  <div class="article-column">
+    <p>
+      Organism weights are read live from a public training bucket, the same
+      source the <a href="dashboard.html">experiment gallery</a> uses. If a
+      model is still training its weights may not exist yet &mdash; retry in
+      a little while.
+    </p>
+    <a href="index.html">&larr; Article</a> &middot;
+    <a href="research.html">Research log &rarr;</a>
+  </div>
+</footer>
+
+<script type="module" src="demo_coexist.js"></script>
+</body>
+</html>
