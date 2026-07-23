@@ -153,6 +153,15 @@ class Lenia(nn.Module):
             self.bank = KernelBank(K, aniso=True)
         elif variant == "wave":
             self.bank = WaveBank(K)
+        elif variant == "sphere":
+            # thin-slab 3D Lenia: channels are LAYERS stacked at learned
+            # heights; one spherical-shell kernel K(rho), rho = 3D distance,
+            # derives ALL layer-pair couplings from geometry. Per-layer
+            # broadcast gains restore excite/inhibit identity. Potentials sum
+            # (a true 3D convolution) before a single growth function.
+            self.bank = KernelBank(1)
+            self.zpos = nn.Parameter(torch.arange(C).float() * 0.25)
+            self.gin = nn.Parameter(torch.randn(C) * 0.2 + 0.7)
         elif variant == "dynwave":
             # fixed oriented Gabor basis (8 orientations), per-cell mixing NN:
             # cells steer their own perception direction locally
@@ -219,6 +228,25 @@ class Lenia(nn.Module):
             u = (c * u_b).sum(1, keepdim=True)              # per-cell kernel
             g = self.bank.growth(u, anneal) * self.bank.gains().view(1, -1, 1, 1)
             dx = g
+        elif v == "sphere":
+            r2d = make_radius(x.device)
+            dz = self.zpos[:, None] - self.zpos[None, :]          # [Z,Z]
+            rho = torch.sqrt(r2d[None, None] ** 2 + dz[:, :, None, None] ** 2)
+            a = sig(self.bank.a, 0.05, 0.95)[0]
+            wd = sig(self.bank.w, 0.03, 0.35)[0]
+            bb = sig(self.bank.b, 0.0, 1.0)[0]
+            k = sum(bb[j] * torch.exp(-((rho - a[j]) / wd[j]) ** 2 / 2)
+                    for j in range(a.shape[0]))
+            k = k * (rho <= 1.0)
+            k0 = sum(bb[j] * torch.exp(-((r2d - a[j]) / wd[j]) ** 2 / 2)
+                     for j in range(a.shape[0])) * (r2d <= 1.0)
+            k = k / (k0.sum() + 1e-8)      # shared norm: distant layers couple less
+            weight = k * torch.tanh(self.gin)[None, :, None, None]
+            xp = F.pad(x, (KS // 2,) * 4, mode="circular")
+            u = F.conv2d(xp, weight)                              # [B,Z,H,W]
+            g = self.bank.growth(u.reshape(B * C, 1, H, W), anneal) \
+                .reshape(B, C, H, W)
+            dx = self.bank.gains()[0] * g
         elif v == "sharedk":
             k = self.bank.kernels(x.device)                 # [1,KS,KS]
             u = self.conv(x.reshape(B * C, 1, H, W), k).reshape(B, C, H, W)
@@ -257,6 +285,22 @@ def _lines(H, W, dirs, spacing, width):
         p = xx * np.cos(th) + yy * np.sin(th)
         d = np.abs(((p / spacing) % 1.0) - 0.5) * spacing
         out = np.maximum(out, (d < width).astype(np.float32))
+    return out
+
+
+def emoji_target(code, H=64, W=64, size=44):
+    """Anchored emoji alpha bitmap (Twemoji PNG by codepoint, e.g. 1f642)."""
+    import io as _io
+    import urllib.request
+    url = ("https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/"
+           f"{code}.png")
+    with urllib.request.urlopen(url) as r:
+        img = Image.open(_io.BytesIO(r.read())).convert("RGBA")
+    img = img.resize((size, size), Image.LANCZOS)
+    a = np.asarray(img, np.float32)[..., 3] / 255.0
+    out = np.zeros((H, W), np.float32)
+    y0, x0 = (H - size) // 2, (W - size) // 2
+    out[y0:y0 + size, x0:x0 + size] = a
     return out
 
 
@@ -304,10 +348,10 @@ def spec(x):
 # ---------------------------------------------------------------- training
 
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
-          size=64, lr=5e-3, t_min=16, t_max=48, rng_seed=0,
-          log_every=150, ckpt_every=500, snap_dir=None):
+          size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
+          rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
     if variant in ("static1", "dyn1", "multik", "aniso", "wave", "dynwave"):
-        C = 1
+        C = 1   # single-channel families; sphere/sharedk/full keep C
     torch.manual_seed(400 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = Lenia(variant, C=C, K=K).to(device)
@@ -317,17 +361,28 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
     # word:<TEXT> targets are anchored bitmaps grown letter-by-letter
     # (curriculum "C" -> "CO" -> ... gated on normalised loss); textures use
     # the translation-invariant spectral loss.
-    is_word = target.startswith("word:")
-    if is_word:
+    is_word = target.startswith("word:") or target.startswith("emoji:")
+    if target.startswith("word:"):
         full = target[5:]
-        stages = [full[:i + 1] for i in range(len(full))]
+        stages = [full] if word_full else \
+            [full[:i + 1] for i in range(len(full))]
         stage, stage_start = 0, 0
         tgt = torch.from_numpy(word_target(stages[0], size, size)).to(device)
+    elif target.startswith("emoji:"):
+        stages = [target[6:]]
+        stage, stage_start = 0, 0
+        tgt = torch.from_numpy(emoji_target(target[6:], size, size)).to(device)
     else:
         tgt = torch.from_numpy(make_target(target, size, size)).to(device)
     tgt_spec = None if is_word else spec(tgt[None])
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(steps * 0.85)], 0.1)
+    if grok:
+        # grokking recipe: constant LR + weight decay, run far past the
+        # apparent plateau and watch for late phase transitions in loss_rel
+        opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-3)
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda e: 1.0)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=lr)
+        sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(steps * 0.85)], 0.1)
 
     def loss_fn(x, t, ts):
         if is_word:
@@ -457,16 +512,21 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--variant", default="static1",
                    choices=["static1", "dyn1", "multik", "sharedk", "full",
-                            "aniso", "wave", "dynwave"])
+                            "aniso", "wave", "dynwave", "sphere"])
     p.add_argument("--target", default="dots",
-                   help="dots|hex|tri|square or word:<TEXT> (letter curriculum)")
+                   help="dots|hex|tri|square, word:<TEXT> (letter curriculum) "
+                        "or emoji:<CODEPOINT> (e.g. emoji:1f642)")
     p.add_argument("--channels", type=int, default=6)
     p.add_argument("--kernels", type=int, default=3)
     p.add_argument("--steps", type=int, default=6000)
+    p.add_argument("--word-full", action="store_true",
+                   help="train the whole word at once (no letter curriculum)")
+    p.add_argument("--grok", action="store_true",
+                   help="AdamW + weight decay + constant LR for grokking runs")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=150)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
     train(variant=a.variant, target=a.target, C=a.channels, K=a.kernels,
-          steps=a.steps, rng_seed=a.rng_seed, log_every=a.log_every,
-          snap_dir=a.snap_dir)
+          steps=a.steps, word_full=a.word_full, grok=a.grok,
+          rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)

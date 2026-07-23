@@ -76,13 +76,20 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
           scaffold="none", bloom=True, diffuse_iters=6, mist_alpha=0.15,
           bloom_noise=0.05, halo_lo=0.02, halo_hi=0.4, explore_frac=0.7,
           void_w=4.0, warmup=2000, damage_p=0.3, fire_rate=0.7, fester_p=0.0,
-          rng_seed=0, log_every=200, ckpt_every=500, snap_dir=None):
+          emoji=None, rng_seed=0, log_every=200, ckpt_every=500, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 23 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Training on device: {device}, scaffold {scaffold}, bloom {bloom}, "
           f"fire {fire_rate}, fester {fester_p}")
 
-    if scaffold == "3line":
+    if emoji:
+        # emoji target: alpha silhouette from Twemoji; RGB stays free, so the
+        # model paints its own emoji (structure-only principle unchanged)
+        from nca.train_lenia import emoji_target
+        a2 = emoji_target(emoji, H=56, W=64, size=44)
+        tgt_np = np.zeros((4, 56, 64), np.float32)
+        tgt_np[3] = a2
+    elif scaffold == "3line":
         tgt_np = render_word_3_line(text, glyph)
     elif scaffold == "fan3":
         tgt_np = render_word_3_line_fan(text, glyph)
@@ -202,6 +209,8 @@ if __name__ == "__main__":
     p.add_argument("--void-w", type=float, default=4.0)
     p.add_argument("--fire-rate", "--fire_rate", type=float, default=0.7)
     p.add_argument("--fester-p", type=float, default=0.0)
+    p.add_argument("--emoji", default=None,
+                   help="Twemoji codepoint target, e.g. 1f642 (overrides text)")
     p.add_argument("--rng-seed", "--rng_seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=200)
     p.add_argument("--snap-dir", default=None)
@@ -209,5 +218,5 @@ if __name__ == "__main__":
     train(a.text, steps=a.steps, scaffold=a.scaffold, bloom=a.bloom,
           bloom_noise=a.bloom_noise, mist_alpha=a.mist_alpha,
           explore_frac=a.explore_frac, void_w=a.void_w,
-          fire_rate=a.fire_rate, fester_p=a.fester_p, rng_seed=a.rng_seed,
-          log_every=a.log_every, snap_dir=a.snap_dir)
+          fire_rate=a.fire_rate, fester_p=a.fester_p, emoji=a.emoji,
+          rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)

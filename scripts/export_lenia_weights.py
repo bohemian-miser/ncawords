@@ -26,6 +26,8 @@ BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
 
 
 def export(variant, C, K, state_dict):
+    if variant == "sphere":
+        raise ValueError("sphere export needs a dedicated engine branch (todo)")
     model = Lenia(variant, C=C, K=K)
     model.load_state_dict(state_dict)
     model.eval()
