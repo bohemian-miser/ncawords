@@ -384,9 +384,15 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         opt = torch.optim.Adam(model.parameters(), lr=lr)
         sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(steps * 0.85)], 0.1)
 
-    def loss_fn(x, t, ts):
+    def loss_fn(x, t, ts, step=10**9):
         if is_word:
-            return F.mse_loss(x[:, 0], t.expand(x.shape[0], -1, -1))
+            # letter pixels are ~3% of the canvas: unweighted MSE makes the
+            # all-dead board an excellent solution (census caught trained
+            # word runs settling at alive=0). Upweight letter-on pixels,
+            # warmed in over 2000 steps (organic-reveal lesson: full pressure
+            # from step 0 collapses training the other way).
+            lw = 1.0 + 8.0 * min(1.0, step / 2000.0) * (t > 0.3).float()
+            return (lw * (x[:, 0] - t.expand(x.shape[0], -1, -1)) ** 2).mean()
         return F.mse_loss(spec(x[:, 0]), ts.expand(x.shape[0], -1, -1)) \
             + 2.0 * (x[:, 0].mean() - t.mean()) ** 2
 
@@ -432,7 +438,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         x = make_init(tgt)
         for _ in range(T):
             x = model.step(x, anneal)
-        loss = loss_fn(x, tgt, tgt_spec)
+        loss = loss_fn(x, tgt, tgt_spec, step)
         rel = loss.item() / baseline
 
         opt.zero_grad(); loss.backward()
