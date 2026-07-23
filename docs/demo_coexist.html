@@ -153,8 +153,12 @@
         <span id="brush-value-val">1.00</span>
       </span>
       <span class="ctl-group">
-        <label for="brush-erase">erase (or right-drag)</label>
+        <label for="brush-erase">erase toward A (or right-drag)</label>
         <input id="brush-erase" type="checkbox">
+      </span>
+      <span class="ctl-group">
+        <label for="brush-additive">additive</label>
+        <input id="brush-additive" type="checkbox">
       </span>
       <span class="ctl-group">
         <label for="tint-toggle">show B tint</label>
@@ -162,11 +166,23 @@
       </span>
     </div>
 
+    <div class="demo-controls">
+      <span class="ctl-group">
+        <label for="push-strength">gradient push</label>
+        <input id="push-strength" type="range" min="0" max="1.5" step="0.05" value="0">
+        <span id="push-strength-val">0.00</span>
+      </span>
+    </div>
+
     <div class="demo-canvas-wrap">
       <canvas id="demo-canvas" width="64" height="64" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
     </div>
     <p class="demo-legend">
-      B=0 &rarr; organism A&rsquo;s rule (blue tint) &middot; B=1 &rarr; organism B&rsquo;s rule (red tint) &mdash; paint to choose who rules where
+      B=0 &rarr; organism A&rsquo;s rule (blue tint) &middot; B=1 &rarr; organism B&rsquo;s rule (red tint)
+      &mdash; left-click/drag paints B-territory, right-click/drag paints A-territory (or use the erase
+      checkbox); toggle &ldquo;additive&rdquo; to sculpt smooth hills/valleys of B instead of flat regions.
+      Painted B now does two things: it selects which organism&rsquo;s rules run, and, if &ldquo;gradient
+      push&rdquo; is above 0, it also physically pushes matter downhill along its slope.
     </p>
     <p id="demo-status">loading trained organisms&hellip;<button id="btn-retry" hidden>Retry</button></p>
 

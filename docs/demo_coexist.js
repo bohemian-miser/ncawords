@@ -112,6 +112,13 @@ export class BlendedCA {
     this._dxB = new Float64Array(this._C);
     // The painted control field: 0 -> model A's rule, 1 -> model B's.
     this.B = new Float32Array(plane);
+
+    // Gradient push: painted B optionally also physically advects the state
+    // downhill (see _advect below). 0 = off (default); px/step at 1.0.
+    this.pushK = 0;
+    this._pgx = new Float32Array(plane);
+    this._pgy = new Float32Array(plane);
+    this._push = new Float32Array(this._C * plane);
   }
 
   get state() { return this._buf; }
@@ -289,6 +296,72 @@ export class BlendedCA {
     }
     this._back = cur;
     this._buf = nxt;
+
+    if (this.pushK) this._advect(this.pushK);
+  }
+
+  // Advect the whole state along the painted field's gradient. Painted B
+  // does two things: (1) as above, it blends which organism's rule runs,
+  // and (2) here, optionally, its slope physically pushes matter downhill.
+  // Semi-Lagrangian: dest(x,y) samples src at (x,y) + k*grad_n(B), i.e. the
+  // UPSTREAM (uphill, +gradient) location — so matter flows downhill, away
+  // from high B, exactly mirroring demo_steer's gradient normalization
+  // (unit direction saturated by min(1, |g|/gmax), gmax = 0.6*maxMag).
+  _advect(k) {
+    const W = this._W, H = this._H, plane = this._plane, C = this._C;
+    const B = this.B, gx = this._pgx, gy = this._pgy;
+
+    let maxMag = 0;
+    for (let y = 0; y < H; y++) {
+      const yu = y > 0, yd = y < H - 1;
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        // Zero-gradient (Neumann) at borders: no wraparound, no state edge.
+        const gxv = (x > 0 && x < W - 1) ? (B[i + 1] - B[i - 1]) * 0.5 : 0;
+        const gyv = (yu && yd) ? (B[i + W] - B[i - W]) * 0.5 : 0;
+        gx[i] = gxv;
+        gy[i] = gyv;
+        const m = Math.sqrt(gxv * gxv + gyv * gyv);
+        if (m > maxMag) maxMag = m;
+      }
+    }
+
+    const gmax = 0.6 * maxMag;
+    const cur = this._buf, out = this._push;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const gxv = gx[i], gyv = gy[i];
+        const m = Math.sqrt(gxv * gxv + gyv * gyv);
+        const wgt = gmax > 0 ? Math.min(1, m / gmax) : 0;
+        const inv = 1 / (m + 1e-9);
+        const gxn = gxv * inv * wgt;
+        const gyn = gyv * inv * wgt;
+
+        let sx = x + k * gxn;
+        let sy = y + k * gyn;
+        if (sx < 0) sx = 0; else if (sx > W - 1) sx = W - 1;
+        if (sy < 0) sy = 0; else if (sy > H - 1) sy = H - 1;
+
+        const x0 = Math.floor(sx), y0 = Math.floor(sy);
+        const x1 = x0 < W - 1 ? x0 + 1 : x0;
+        const y1 = y0 < H - 1 ? y0 + 1 : y0;
+        const fx = sx - x0, fy = sy - y0;
+        const w00 = (1 - fx) * (1 - fy), w10 = fx * (1 - fy);
+        const w01 = (1 - fx) * fy, w11 = fx * fy;
+        const i00 = y0 * W + x0, i10 = y0 * W + x1;
+        const i01 = y1 * W + x0, i11 = y1 * W + x1;
+
+        for (let c = 0; c < C; c++) {
+          const off = c * plane;
+          out[off + i] = cur[off + i00] * w00 + cur[off + i10] * w10 +
+                          cur[off + i01] * w01 + cur[off + i11] * w11;
+        }
+      }
+    }
+
+    this._push = cur;
+    this._buf = out;
   }
 
   // Ink-on-white RGBA, same as nca.js rgbaFromState.
@@ -331,6 +404,9 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
   const valueInput = document.getElementById("brush-value");
   const valueVal = document.getElementById("brush-value-val");
   const eraseToggle = document.getElementById("brush-erase");
+  const additiveToggle = document.getElementById("brush-additive");
+  const pushInput = document.getElementById("push-strength");
+  const pushVal = document.getElementById("push-strength-val");
   const tintToggle = document.getElementById("tint-toggle");
   const modelASelect = document.getElementById("model-a");
   const modelBSelect = document.getElementById("model-b");
@@ -400,6 +476,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
         next.B.set(savedB);
       }
       ca = next;
+      ca.pushK = Number(pushInput.value);
       if (!savedB || savedB.length !== ca.B.length) bHalves();
       savedB = null;
       plantSeeds();
@@ -450,12 +527,23 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
   valueInput.addEventListener("input", () => {
     valueVal.textContent = Number(valueInput.value).toFixed(2);
   });
+  pushInput.addEventListener("input", () => {
+    pushVal.textContent = Number(pushInput.value).toFixed(2);
+    if (ca) ca.pushK = Number(pushInput.value);
+  });
 
+  // erase=true means "paint toward A" — either the erase checkbox or a
+  // right-click/drag. In SET mode that's a flat B=0; in additive mode it's
+  // a negative delta, so painting sculpts smooth hills/valleys of B instead
+  // of flat regions.
   function paintB(gx, gy, erase) {
     if (!ca) return;
     const W = ca.width, H = ca.height, B = ca.B;
     const radius = Number(radiusInput.value);
-    const value = erase ? 0 : Number(valueInput.value);
+    const brushValue = Number(valueInput.value);
+    const additive = additiveToggle.checked;
+    const value = erase ? 0 : brushValue;
+    const delta = (erase ? -1 : 1) * brushValue * 0.15;
     const r2 = radius * radius;
     for (let dy = -radius; dy <= radius; dy++) {
       const yy = gy + dy;
@@ -464,7 +552,13 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
         const xx = gx + dx;
         if (xx < 0 || xx >= W) continue;
         if (dx * dx + dy * dy > r2) continue;
-        B[yy * W + xx] = value;
+        const i = yy * W + xx;
+        if (additive) {
+          const v = B[i] + delta;
+          B[i] = v < 0 ? 0 : v > 1 ? 1 : v;
+        } else {
+          B[i] = value;
+        }
       }
     }
   }
