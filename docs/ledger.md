@@ -204,6 +204,22 @@
 
 ### nca.analysis
 
+#### comp-campaign-phase1 (ANALYSIS, 2026-07-24)
+39-run Lenia-COMP campaign verdict (OCR-judged, tesseract). Uniform physics cannot memorise letter positions; a clamped faint scaffold channel fixes it (morphogen recipe). Winners: sharedk & full + scaffold — perfect 'COMP' OCR reads. 
+
+**Headline:** Zero-shot transfer — cw-sharedk-s96-r1 and cw-full-s96-r1, trained only on COMP, write NCA and WORD perfectly from unseen scaffolds: the physics learned a general develop-letters-from-prepattern operator (~50-1300 params). 
+
+**Details:** Trained-init variant most reliable in training but init boards were not persisted (fixed; init.pth now saved) and cannot transfer. Scaffold-alone runs can degrade late in training (one went COMP -> BE7H). Sphere variant: 0/8 on words — clean negative for the 3D slab. Classic NCA batch reads COPMP/COMIP (0.89); fan-scaffold NCA runs read COFEP/COPP (0.67-0.75) — OCR exposed loss flattery.
+
+#### grok-marathons (ANALYSIS, 2026-07-24)
+Five 40k-step grokking-recipe runs (AdamW + wd + constant LR): NO late phase transitions. an-square/mk-tri flat; mk-square slow grind 0.58->0.45 (still unsolved); grok-word2 DEGRADED second half (0.08->0.22, weight decay eroded the solution). Preconditions absent: pattern losses have no memorise/generalise split. Closed as negative; no further grok spend.
+
+#### p2-wave (RUNNING, 2026-07-24)
+Phase 2 (20 jobs): 5-seed robustness fleets for sharedk/full scaffold, scaffold-faintness dial 0.35->0.05 (copying->development spectrum), persisted-init reruns.
+
+#### hardened-emojis (QUEUED, 2026-07-24)
+tough-*/firm-*: 9 vanilla-recipe emoji organisms with heavy damage (p=0.7, up to 5 wounds) + fester 0.3/0.15 for stability; feed the coexistence demo.
+
 #### crit-map-2026-07-19 (ANALYSIS)
 Criticality phase map: dynamics probes (JVP spectral radius, Benettin Lyapunov, fixed-point residual) over all 221 bucket checkpoints, at mid-growth (alive-rich) and settled states.
 
