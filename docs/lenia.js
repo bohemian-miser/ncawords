@@ -939,6 +939,13 @@ async function activateOrCollapseLive(tr) {
         tr.liveStepAccum = 0;
         drawLive(tr);
         tr.liveStatusObj.innerText = 'live trained physics — click/drag to damage';
+        // Seed only makes sense when training didn't start from noise —
+        // hide it on noise-trained runs so it can't masquerade as a no-op.
+        if (tr.liveseedBtn) {
+            const ini = weights.init;
+            tr.liveseedBtn.style.display =
+                (ini === 'seedblob' || ini === 'scaffold') ? '' : 'none';
+        }
         if (tr.liveCA.hasScaffold && tr.livestencilBtn) {
             tr.livestencilBtn.style.display = '';
             tr.livestencilBtn.innerText = 'Stencil: on';
