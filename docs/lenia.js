@@ -968,7 +968,7 @@ function liveDamageAt(tr, e) {
     const rect = tr.liveCanvas.getBoundingClientRect();
     const normX = (e.clientX - rect.left) / rect.width;
     const normY = (e.clientY - rect.top) / rect.height;
-    tr.liveCA.damage(normX * 64, normY * 64, 6);
+    tr.liveCA.damage(normX * tr.liveCA.width, normY * tr.liveCA.height, 6);
     drawLive(tr);
 }
 
