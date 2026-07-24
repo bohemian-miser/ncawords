@@ -948,9 +948,12 @@ async function activateOrCollapseLive(tr) {
         }
         if (tr.liveCA.hasScaffold && tr.livestencilBtn) {
             tr.livestencilBtn.style.display = '';
-            tr.livestencilBtn.innerText = 'Stencil: on';
+            // stencil OFF by default — nothing hidden unless you opt in
+            tr.liveCA.setScaffold(false);
+            tr.livestencilBtn.innerText = 'Stencil: OFF';
             tr.liveStatusObj.innerText =
-                'scaffold-conditioned: a prepattern (blue) is clamped every step — try Stencil: OFF';
+                'scaffold-conditioned run; stencil is OFF (this physics was trained WITH it — Stencil: on to see)';
+            drawLive(tr);
         }
         runLiveLoop(tr);
     } catch (e) {
