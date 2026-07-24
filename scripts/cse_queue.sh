@@ -7,11 +7,12 @@
 # Run two lanes max — the login VM has 2 shared cores and we nice -n 19.
 set -uo pipefail
 QUEUE=$1
+HOST="${2:-cse}"
 cd "$(dirname "$0")/.."
 
 .venv/bin/python setup.py -q sdist --formats=gztar >/dev/null 2>&1
-scp -q dist/nca-0.1.tar.gz cse:nca-latest.tar.gz
-ssh -o BatchMode=yes cse \
+scp -q dist/nca-0.1.tar.gz "$HOST":nca-latest.tar.gz
+ssh -o BatchMode=yes "$HOST" \
   "./nca-venv/bin/pip install -q --no-cache-dir --force-reinstall --no-deps ~/nca-latest.tar.gz"
 
 while IFS= read -r line; do
@@ -21,9 +22,9 @@ while IFS= read -r line; do
   MODULE=$(echo "$line" | awk '{print $2}')
   ARGS=$(echo "$line" | cut -d' ' -f3-)
   echo "[queue] ==== $NAME ===="
-  ssh -o BatchMode=yes cse "mkdir -p nca-runs/$NAME"
+  ssh -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
   for attempt in $(seq 1 200); do
-    ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 cse \
+    ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
       "cd ~ && nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
       && break
     echo "[queue] $NAME dropped (attempt $attempt); resuming in 60s"
@@ -31,6 +32,6 @@ while IFS= read -r line; do
   done
   echo "[queue] $NAME done; collecting + cleaning"
   .venv/bin/python scripts/cse_collect.py || true
-  ssh -o BatchMode=yes cse "rm -rf nca-runs/$NAME"
+  ssh -o BatchMode=yes "$HOST" "rm -rf nca-runs/$NAME"
 done < "$QUEUE"
 echo "[queue] lane complete: $QUEUE"

@@ -1,0 +1,4 @@
+ns-sharedk-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=6 --rng-seed=0
+ns-sharedk12-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=12 --rng-seed=0
+ns-full12-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=full --channels=12 --rng-seed=0
+ns-sharedk16-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=16 --rng-seed=0
