@@ -20,8 +20,11 @@ export class LeniaCA {
     // scaffold-conditioned runs: a prepattern clamped into the LAST channel
     // after every step, exactly as in training. Only valid at the trained
     // size, which the exporter records in w.size.
-    if (w.scaffold && size === (w.size ?? size))
+    if (w.scaffold && size === (w.size ?? size)) {
       this._scaf = Float32Array.from(w.scaffold.flat());
+      // t0-trained runs see the stencil at reset ONLY, never re-clamped
+      this._scafT0 = w.scaf_mode === "t0";
+    }
     this.resetTrained();
   }
 
@@ -165,7 +168,7 @@ export class LeniaCA {
       const c = xn < 0 ? 0 : xn > 1 ? 1 : xn;
       st[i] = c + leak * (xn - c);
     }
-    this._applyScaffold();   // clamp the prepattern channel, as in training
+    if (!this._scafT0) this._applyScaffold();   // persistent-mode clamp only
   }
 
   damage(cx, cy, rad = 8) {
@@ -176,7 +179,7 @@ export class LeniaCA {
         if (dx2 < rad * rad)
           for (let c = 0; c < this.C; c++) this.state[c * plane + y * s + x] = 0;
       }
-    this._applyScaffold();   // damage never removes the clamped prepattern
+    if (!this._scafT0) this._applyScaffold();   // persistent mode only
   }
 
   readChannel(c) {

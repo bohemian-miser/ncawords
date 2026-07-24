@@ -14,7 +14,7 @@
 // browser via lenia_engine.js (LeniaCA) — a real from-scratch simulator,
 // distinct from the pre-rendered PNG timelapse above it.
 
-import { LeniaCA } from './lenia_engine.js?v=stencil1';
+import { LeniaCA } from './lenia_engine.js?v=t0mode';
 
 let methods = [];
 let cardTrackers = [];
