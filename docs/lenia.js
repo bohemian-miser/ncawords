@@ -119,7 +119,10 @@ function buildSubtitle(args) {
     if (args.variant) parts.push(args.variant);
     if (args.target) parts.push(args.target);
     if (args.C !== undefined) parts.push(`${args.C}ch`);
-    if (args.K !== undefined) parts.push(`${args.K} kernel${args.K === 1 ? '' : 's'}`);
+    // sharedk has ONE kernel by design (kernel + coupling matrix); the K
+    // arg is inert for it and would mislabel the card.
+    if (args.variant === 'sharedk') parts.push('1 kernel (shared)');
+    else if (args.K !== undefined) parts.push(`${args.K} kernel${args.K === 1 ? '' : 's'}`);
     if (args.params !== undefined) parts.push(`${args.params} params`);
     // cw-*/p2-* campaign runs carry extra args the original lenia-* runs
     // didn't; surface whichever of these are present.
