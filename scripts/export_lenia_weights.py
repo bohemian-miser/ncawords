@@ -64,15 +64,37 @@ def run_meta(run):
     with urllib.request.urlopen(f"{BUCKET}/{run}/run.json") as r:
         d = json.load(r)
     a = d.get("args", {})
-    return a.get("variant"), a.get("C", 1), a.get("K", 3)
+    return a.get("variant"), a.get("C", 1), a.get("K", 3), a
 
 
 def process(run, upload):
-    variant, C, K = run_meta(run)
+    variant, C, K, args = run_meta(run)
     with urllib.request.urlopen(f"{BUCKET}/{run}/latest.pth") as r:
         sd = torch.load(io.BytesIO(r.read()), map_location="cpu",
                         weights_only=True)
     out = export(variant, C, K, sd)
+    # init recipe so the live widget can start the way training did
+    target = args.get("target", "")
+    size = args.get("size", 64)
+    out["size"] = size
+    if target.startswith(("word:", "emoji:")):
+        from nca.train_lenia import word_target, emoji_target
+        if target.startswith("word:"):
+            t = word_target(target[5:], size, size, args.get("word_scale", 1.0))
+        else:
+            t = emoji_target(target[6:], size, size)
+        import numpy as np
+        if args.get("cond") == "scaffold":
+            out["init"] = "scaffold"
+            out["scaffold"] = (t * args.get("scaf_strength", 0.5)) \
+                .round(4).tolist()
+        else:
+            out["init"] = "seedblob"
+            cols = np.argwhere((t > 0.3).any(axis=0))
+            out["seed_x"] = int(cols.min()) if len(cols) else size // 2
+            out["seed_y"] = size // 2
+    else:
+        out["init"] = "noise"
     path = f"/tmp/{run}-weights.json"
     with open(path, "w") as f:
         json.dump(out, f)
