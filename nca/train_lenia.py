@@ -358,7 +358,7 @@ def spec(x):
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
           size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
           cond="none", train_init=False, word_scale=1.0, scaf_strength=0.5,
-          scaf_holes=0, scaf_noise=0.0, scaf_t0=False,
+          scaf_holes=0, scaf_noise=0.0, scaf_persistent=False,
           rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
     if variant in ("static1", "dyn1", "multik", "aniso", "wave"):
         C = 1   # single-channel families; sphere/sharedk/full/dynwave keep C
@@ -460,7 +460,8 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     "rng_seed": rng_seed, "params": n_par, "cond": cond,
                     "train_init": train_init, "word_scale": word_scale,
                     "scaf_strength": scaf_strength, "scaf_holes": scaf_holes,
-                    "scaf_noise": scaf_noise, "scaf_t0": scaf_t0,
+                    "scaf_noise": scaf_noise,
+                    "scaf_persistent": scaf_persistent,
                     "size": size, "grok": grok},
                    C, 0, "noise", steps, device, tags=["lenia", variant, target])
 
@@ -504,7 +505,11 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                 scaf_b = scaf_b * hole_mask
         for ti in range(T):
             x = model.step(x, anneal)
-            if scaf_b is not None and not (scaf_t0 and ti > 0):
+            # DEFAULT: the scaffold is shown ONCE (t0) — a blueprint, not
+            # a crutch. Persistent every-step clamping is an explicit
+            # opt-in for morphogen-biology comparisons; the interrogation
+            # showed it degenerates training into stencil-amplification.
+            if scaf_b is not None and (ti == 0 or scaf_persistent):
                 s = scaf_b
                 if scaf_noise > 0:
                     s = (s + torch.randn_like(s) * scaf_noise).clamp(0, 1)
@@ -620,7 +625,10 @@ if __name__ == "__main__":
     p.add_argument("--scaf-strength", type=float, default=0.5)
     p.add_argument("--scaf-holes", type=int, default=0)
     p.add_argument("--scaf-noise", type=float, default=0.0)
-    p.add_argument("--scaf-t0", action="store_true")
+    p.add_argument("--scaf-persistent", action="store_true",
+                   help="clamp the scaffold EVERY step (default: t0 only)")
+    p.add_argument("--scaf-t0", action="store_true",
+                   help="deprecated no-op: t0-only is now the default")
     p.add_argument("--size", type=int, default=64)
     p.add_argument("--grok", action="store_true",
                    help="AdamW + weight decay + constant LR for grokking runs")
@@ -632,5 +640,5 @@ if __name__ == "__main__":
           steps=a.steps, word_full=a.word_full, grok=a.grok, cond=a.cond,
           train_init=a.train_init, word_scale=a.word_scale, size=a.size,
           scaf_strength=a.scaf_strength, scaf_holes=a.scaf_holes,
-          scaf_noise=a.scaf_noise, scaf_t0=a.scaf_t0,
+          scaf_noise=a.scaf_noise, scaf_persistent=a.scaf_persistent,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
