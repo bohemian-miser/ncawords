@@ -398,6 +398,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
           size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
           cond="none", train_init=False, word_scale=1.0, scaf_strength=0.5,
           scaf_holes=0, scaf_noise=0.0, scaf_persistent=False,
+          scaf_ablate=0.0,
           rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
     if variant in ("static1", "dyn1", "multik", "aniso", "wave"):
         C = 1   # single-channel families; sphere/sharedk/full/dynwave keep C
@@ -501,6 +502,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     "scaf_strength": scaf_strength, "scaf_holes": scaf_holes,
                     "scaf_noise": scaf_noise,
                     "scaf_persistent": scaf_persistent,
+                    "scaf_ablate": scaf_ablate,
                     "size": size, "grok": grok},
                    C, 0, "noise", steps, device, tags=["lenia", variant, target])
 
@@ -542,8 +544,18 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                         hole_mask[b, :, max(0, cy - 3):cy + 3,
                                   max(0, cx - 3):cx + 3] = 0.0
                 scaf_b = scaf_b * hole_mask
+        # ablation training: zero the memory channel at a random mid-
+        # rollout step — a kept copy of the t0 stencil becomes worthless,
+        # so the word must live distributed across channels (the copy-keeper
+        # cheat found by interrogation #2 prescribed this cure)
+        abl_t = -1
+        if scaf_ablate > 0 and cond == "scaffold" and not scaf_persistent \
+                and torch.rand(1).item() < scaf_ablate and T > 16:
+            abl_t = int(torch.randint(8, T - 8, (1,)))
         for ti in range(T):
             x = model.step(x, anneal)
+            if ti == abl_t:
+                x = torch.cat([x[:, :-1], torch.zeros_like(x[:, -1:])], 1)
             # DEFAULT: the scaffold is shown ONCE (t0) — a blueprint, not
             # a crutch. Persistent every-step clamping is an explicit
             # opt-in for morphogen-biology comparisons; the interrogation
@@ -683,6 +695,8 @@ if __name__ == "__main__":
     p.add_argument("--scaf-strength", type=float, default=0.5)
     p.add_argument("--scaf-holes", type=int, default=0)
     p.add_argument("--scaf-noise", type=float, default=0.0)
+    p.add_argument("--scaf-ablate", type=float, default=0.0,
+                   help="prob of zeroing the scaffold channel mid-rollout")
     p.add_argument("--scaf-persistent", action="store_true",
                    help="clamp the scaffold EVERY step (default: t0 only)")
     p.add_argument("--scaf-t0", action="store_true",
@@ -699,4 +713,5 @@ if __name__ == "__main__":
           train_init=a.train_init, word_scale=a.word_scale, size=a.size,
           scaf_strength=a.scaf_strength, scaf_holes=a.scaf_holes,
           scaf_noise=a.scaf_noise, scaf_persistent=a.scaf_persistent,
+          scaf_ablate=a.scaf_ablate,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
