@@ -15,10 +15,8 @@
     overflow-x: auto;
   }
   #demo-canvas {
-    width: 1440px;
-    max-width: 96vw;      /* 3x size on big screens, shrink-to-fit on small */
-    height: auto;
-    aspect-ratio: 1 / 1;
+    width: 480px;
+    height: 480px;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     display: block;
@@ -160,8 +158,8 @@
       </span>
       <span class="ctl-group">
         <label for="brush-radius">brush radius</label>
-        <input id="brush-radius" type="range" min="2" max="20" step="1" value="8">
-        <span id="brush-radius-val">8</span>
+        <input id="brush-radius" type="range" min="4" max="40" step="1" value="16">
+        <span id="brush-radius-val">16</span>
       </span>
       <span class="ctl-group">
         <label for="brush-value">brush value</label>
@@ -191,7 +189,7 @@
     </div>
 
     <div class="demo-canvas-wrap">
-      <canvas id="demo-canvas" width="64" height="64" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
+      <canvas id="demo-canvas" width="192" height="192" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
     </div>
     <p class="demo-legend">
       B=0 &rarr; organism A&rsquo;s rule (blue tint) &middot; B=1 &rarr; organism B&rsquo;s rule (red tint)
@@ -209,6 +207,7 @@
         <button id="btn-seeds">Plant seeds</button>
       </span>
       <span class="preset-group">
+        <button id="btn-b-gradient">A&rarr;B gradient</button>
         <button id="btn-b-halves">B: left | right</button>
         <button id="btn-b-zero">B: all A</button>
         <button id="btn-b-one">B: all B</button>

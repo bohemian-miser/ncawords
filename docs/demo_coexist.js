@@ -77,16 +77,28 @@ function computeDxZero({ C, HN, b0, w1 }) {
 // ---------------------------------------------------------------------------
 
 export class BlendedCA {
-  constructor(weightsA, weightsB) {
+  // `size`, if given, overrides the simulation grid side (both engines are
+  // fully convolutional — fc0/fc1 run per-cell on a 3x3 neighborhood, so
+  // the grid can be any size regardless of the weights' native training
+  // grid). Omit it to fall back to the weights' own grid_w/grid_h/grid,
+  // requiring A and B to agree (used by the CPUCA parity test).
+  constructor(weightsA, weightsB, size) {
     if (weightsA.channel_n !== weightsB.channel_n) {
       throw new Error(`channel_n mismatch: ${weightsA.channel_n} vs ${weightsB.channel_n}`);
     }
-    const dA = gridDims(weightsA), dB = gridDims(weightsB);
-    if (dA.W !== dB.W || dA.H !== dB.H) {
-      throw new Error(`grid mismatch: ${dA.W}x${dA.H} vs ${dB.W}x${dB.H}`);
+    let W, H;
+    if (size) {
+      W = H = size;
+    } else {
+      const dA = gridDims(weightsA), dB = gridDims(weightsB);
+      if (dA.W !== dB.W || dA.H !== dB.H) {
+        throw new Error(`grid mismatch: ${dA.W}x${dA.H} vs ${dB.W}x${dB.H}`);
+      }
+      W = dA.W;
+      H = dA.H;
     }
-    this._W = dA.W;
-    this._H = dA.H;
+    this._W = W;
+    this._H = H;
     this.fire_rate = weightsA.fire_rate != null ? weightsA.fire_rate : 0.5;
 
     this._fA = flattenWeights(weightsA);
@@ -386,6 +398,11 @@ export class BlendedCA {
 // ---------------------------------------------------------------------------
 
 if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
+  // Simulation grid side. 3x the original 64x64 (9x the cells) at the same
+  // 480px display size — finer pixels, same footprint. BlendedCA is fully
+  // convolutional so this is independent of the weights' native grid.
+  const SIM_SIZE = 192;
+
   const canvas = document.getElementById("demo-canvas");
   const ctx = canvas.getContext("2d");
   const statusEl = document.getElementById("demo-status");
@@ -394,6 +411,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
   const stepCounterEl = document.getElementById("step-counter");
   const playBtn = document.getElementById("btn-play");
   const seedsBtn = document.getElementById("btn-seeds");
+  const bGradientBtn = document.getElementById("btn-b-gradient");
   const bHalvesBtn = document.getElementById("btn-b-halves");
   const bZeroBtn = document.getElementById("btn-b-zero");
   const bOneBtn = document.getElementById("btn-b-one");
@@ -454,12 +472,24 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
         B[y * W + x] = x < W / 2 ? 0 : 1;
   }
 
+  // Smooth horizontal ramp from 0 (left, organism A) to 1 (right, organism
+  // B) — a painted-field preset (like demo_modulation's bRamp), unrelated
+  // to the gradient-push slider. Default B field on load.
+  function bGradientRamp() {
+    if (!ca) return;
+    const W = ca.width, H = ca.height, B = ca.B;
+    const denom = W > 1 ? W - 1 : 1;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++)
+        B[y * W + x] = x / denom;
+  }
+
   function plantSeeds() {
     if (!ca) return;
     ca.clear();
     const W = ca.width, H = ca.height;
-    ca.seed(Math.round(W * 0.25), H >> 1); // (16, 32) on a 64x64 grid
-    ca.seed(Math.round(W * 0.75), H >> 1); // (48, 32) on a 64x64 grid
+    ca.seed(Math.round(W * 0.25), H >> 1); // (S/4, S/2) — (48, 96) on a 192x192 grid
+    ca.seed(Math.round(W * 0.75), H >> 1); // (3S/4, S/2) — (144, 96) on a 192x192 grid
     stepCount = 0;
   }
 
@@ -513,7 +543,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
         fetchWeightsWithFallback(runB),
       ]);
       if (token !== loadToken) return; // superseded by a newer selection
-      const next = new BlendedCA(resA.weights, resB.weights);
+      const next = new BlendedCA(resA.weights, resB.weights, SIM_SIZE);
       canvas.width = next.width;
       canvas.height = next.height;
       imgData = ctx.createImageData(next.width, next.height);
@@ -523,7 +553,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
       }
       ca = next;
       ca.pushK = Number(pushInput.value);
-      if (!savedB || savedB.length !== ca.B.length) bHalves();
+      if (!savedB || savedB.length !== ca.B.length) bGradientRamp();
       savedB = null;
       plantSeeds();
       setStatus(`${runA} (A) + ${runB} (B) loaded — running`);
@@ -663,6 +693,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
     playBtn.textContent = playing ? "Pause" : "Play";
   });
   seedsBtn.addEventListener("click", plantSeeds);
+  bGradientBtn.addEventListener("click", bGradientRamp);
   bHalvesBtn.addEventListener("click", bHalves);
   bZeroBtn.addEventListener("click", () => { if (ca) ca.B.fill(0); });
   bOneBtn.addEventListener("click", () => { if (ca) ca.B.fill(1); });
