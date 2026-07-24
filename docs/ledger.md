@@ -225,6 +225,9 @@ Phase 2 (20 jobs): 5-seed robustness fleets for sharedk/full scaffold, scaffold-
 #### hardened-emojis (QUEUED, 2026-07-24)
 tough-*/firm-*: 9 vanilla-recipe emoji organisms with heavy damage (p=0.7, up to 5 wounds) + fester 0.3/0.15 for stability; feed the coexistence demo.
 
+#### stencil-purge (ANALYSIS, 2026-07-24)
+User directive following the stencil-amplifier retraction: ALL runs trained with a persistent every-step scaffold clamp are deprecated as invalid (cw-* scaffold runs, p2-* wave, p3 holes/hn variants — cancelled where still active). Trainer default changed: scaffold is now t0-only (shown once at step 0, then the physics must build and hold the word from memory); persistent clamping is an explicit opt-in (--scaf-persistent). Redo campaign cwt0-* launched: sharedk/full/dynwave x 4 seeds + train-init combos at 20k steps, all t0-only, all with native weights export. Surviving valid cohorts: p3-*-t0 (same semantics), no-scaffold baselines, all NCA runs (never used stencils), all texture runs (position-free). Every future positive result faces the adversarial interrogation battery (pointwise-fit baseline, hole completion, receptive field, no-clamp persistence) before being believed.
+
 #### crit-map-2026-07-19 (ANALYSIS)
 Criticality phase map: dynamics probes (JVP spectral radius, Benettin Lyapunov, fixed-point residual) over all 221 bucket checkpoints, at mid-growth (alive-rich) and settled states.
 
