@@ -78,9 +78,14 @@ def process(run, upload):
         json.dump(out, f)
     print(f"{run}: exported {variant} C={C} K={K} -> {path}")
     if upload:
-        subprocess.run(["gcloud", "storage", "cp", path,
-                        f"gs://recipe-lanes-nca-jobs/{run}/weights.json",
-                        "-q"], check=True)
+        import os
+        os.environ.setdefault(
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            os.path.expanduser("~/.config/nca/submitter-key.json"))
+        from google.cloud import storage
+        storage.Client(project="recipe-lanes-staging") \
+            .bucket("recipe-lanes-nca-jobs") \
+            .blob(f"{run}/weights.json").upload_from_filename(path)
         print(f"{run}: uploaded")
 
 
@@ -91,11 +96,13 @@ if __name__ == "__main__":
     p.add_argument("--upload", action="store_true")
     a = p.parse_args()
     if a.all:
-        with urllib.request.urlopen(
-                "https://storage.googleapis.com/storage/v1/b/"
-                "recipe-lanes-nca-jobs/o?prefix=lenia-&delimiter=/"
-                "&fields=prefixes&maxResults=1000") as r:
-            runs = [x.rstrip("/") for x in json.load(r).get("prefixes", [])]
+        runs = []
+        for pref in ("lenia-", "cw-", "p2-"):
+            with urllib.request.urlopen(
+                    "https://storage.googleapis.com/storage/v1/b/"
+                    f"recipe-lanes-nca-jobs/o?prefix={pref}&delimiter=/"
+                    "&fields=prefixes&maxResults=1000") as r:
+                runs += [x.rstrip("/") for x in json.load(r).get("prefixes", [])]
         for run in runs:
             try:
                 process(run, a.upload)
