@@ -353,6 +353,45 @@ def spec(x):
     return F.avg_pool2d(p[:, None], 3, 1, 1)[:, 0]
 
 
+
+
+def export_web_weights(model, variant, C, K, size, init_kind="noise",
+                       scaf=None, scaf_mode="persistent", seed_xy=None):
+    """Evaluate the physics to a plain-array dict for the web engine.
+    Returns None for variants without an engine branch (sphere)."""
+    if variant == "sphere":
+        return None
+    out = {"kind": "lenia", "variant": variant, "C": C, "K": K,
+           "dt": model.dt, "ks": KS, "leak": 0.05, "size": size,
+           "init": init_kind, "scaf_mode": scaf_mode}
+    with torch.no_grad():
+        bank = model.bank
+        if variant in ("dyn1", "dynwave"):
+            out["basis"] = model.basis[:, 0].cpu().numpy().round(6).tolist()
+            w0, b0 = model.mix[0].weight, model.mix[0].bias
+            w2, b2 = model.mix[2].weight, model.mix[2].bias
+            out["mix"] = {
+                "w0": w0[:, :, 0, 0].cpu().numpy().round(6).tolist(),
+                "b0": b0.cpu().numpy().round(6).tolist(),
+                "w2": w2[:, :, 0, 0].cpu().numpy().round(6).tolist(),
+                "b2": b2.cpu().numpy().round(6).tolist(),
+            }
+        else:
+            out["kernels"] = bank.kernels(
+                next(model.parameters()).device).detach().cpu()                 .numpy().round(6).tolist()
+        lo = -0.6 if variant in ("wave", "dynwave") else 0.0
+        out["mu"] = sig(bank.mu, lo, 1.0).detach().cpu().numpy().round(6).tolist()
+        out["sg"] = sig(bank.sg, 0.02, 0.35).detach().cpu().numpy().round(6).tolist()
+        out["h"] = torch.tanh(bank.h).detach().cpu().numpy().round(6).tolist()
+        if variant == "sharedk":
+            out["H"] = torch.tanh(model.H).detach().cpu().numpy().round(6).tolist()
+    if scaf is not None:
+        out["scaffold"] = scaf.round(4).tolist()
+    if seed_xy is not None:
+        out["seed_x"], out["seed_y"] = int(seed_xy[0]), int(seed_xy[1])
+    return out
+
+
 # ---------------------------------------------------------------- training
 
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
@@ -586,6 +625,25 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     Image.fromarray(rgb).resize((C * 24,) * 2, Image.NEAREST) \
                         .save(Path(snap_dir) / f"COUPLING_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
+                # native web export: weights.json is always current, no
+                # post-hoc export pass needed
+                init_kind = "scaffold" if cond == "scaffold" else \
+                    ("seedblob" if is_word else "noise")
+                seed_xy = None
+                if init_kind == "seedblob":
+                    cols = (tgt > 0.3).any(dim=0).nonzero()
+                    seed_xy = (int(cols.min()) if len(cols) else size // 2,
+                               size // 2)
+                ww = export_web_weights(
+                    model, variant, C, K, size, init_kind,
+                    scaf=(tgt * scaf_strength).detach().cpu().numpy()
+                    if cond == "scaffold" else None,
+                    scaf_mode="persistent" if scaf_persistent else "t0",
+                    seed_xy=seed_xy)
+                if ww is not None:
+                    import json as _json
+                    with open(Path(snap_dir) / "weights.json", "w") as f:
+                        _json.dump(ww, f)
                 if init_logits is not None:
                     # persist the learned init board — without this the -init
                     # models cannot be reproduced from artifacts (phase-1 bug)

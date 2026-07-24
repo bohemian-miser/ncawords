@@ -23,6 +23,7 @@ sys.path.insert(0, ".")
 from nca.train_lenia import Lenia, sig, KS  # noqa: E402
 
 BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
+API = "https://storage.googleapis.com/storage/v1/b/recipe-lanes-nca-jobs/o"
 
 
 def export(variant, C, K, state_dict):
@@ -67,7 +68,23 @@ def run_meta(run):
     return a.get("variant"), a.get("C", 1), a.get("K", 3), a
 
 
-def process(run, upload):
+def is_fresh(run):
+    """True if weights.json is newer than latest.pth (nothing to do)."""
+    try:
+        with urllib.request.urlopen(
+                f"{API}?prefix={run}/&fields=items(name,updated)") as r:
+            items = {i["name"]: i["updated"]
+                     for i in json.load(r).get("items", [])}
+        w, l = items.get(f"{run}/weights.json"), items.get(f"{run}/latest.pth")
+        return bool(w and l and w > l)
+    except Exception:
+        return False
+
+
+def process(run, upload, skip_fresh=False):
+    if skip_fresh and is_fresh(run):
+        print(f"{run}: fresh, skipped")
+        return
     variant, C, K, args = run_meta(run)
     with urllib.request.urlopen(f"{BUCKET}/{run}/latest.pth") as r:
         sd = torch.load(io.BytesIO(r.read()), map_location="cpu",
@@ -127,7 +144,7 @@ if __name__ == "__main__":
                 runs += [x.rstrip("/") for x in json.load(r).get("prefixes", [])]
         for run in runs:
             try:
-                process(run, a.upload)
+                process(run, a.upload, skip_fresh=True)
             except Exception as e:
                 print(f"{run}: SKIP ({str(e)[:60]})")
     else:
