@@ -436,6 +436,7 @@ function buildCard(m) {
             <div class="lenia-controls">
                 <button id="liveplay_${m.id}" title="Play/pause live simulation">&#9654;</button>
                 <button id="livereset_${m.id}" title="Reset to random noise">Reset noise</button>
+                <button id="liveseed_${m.id}" title="Reset the way training started (seed blob / scaffold)">Seed</button>
                 <button id="liveclear_${m.id}" title="Clear to empty">Clear</button>
                 <label style="margin-left:6px;">speed <input type="range" id="livespeed_${m.id}" min="0.1" max="10" step="0.1" value="1" style="width:60px;"></label>
             </div>
@@ -495,6 +496,8 @@ function buildCard(m) {
     tr.livePlayBtn.onclick = () => window.toggleLivePause(m.id);
     tr.liveresetBtn = card.querySelector(`#livereset_${esc}`);
     tr.liveresetBtn.onclick = () => window.liveResetNoise(m.id);
+    tr.liveseedBtn = document.getElementById(`liveseed_${m.id}`);
+    if (tr.liveseedBtn) tr.liveseedBtn.onclick = () => window.liveSeed(m.id);
     tr.liveclearBtn = card.querySelector(`#liveclear_${esc}`);
     tr.liveclearBtn.onclick = () => window.liveClear(m.id);
     tr.liveCanvas.addEventListener('mousedown', (e) => { tr.liveDamaging = true; liveDamageAt(tr, e); });
@@ -915,8 +918,11 @@ async function activateOrCollapseLive(tr) {
             return;
         }
         const weights = await res.json();
-        tr.liveCA = new LeniaCA(weights, 64);
-        tr.liveImgData = tr.liveCtx.createImageData(64, 64);
+        const S = weights.size ?? 64;   // run at the trained grid size
+        tr.liveCA = new LeniaCA(weights, S);
+        tr.liveCanvas.width = S;
+        tr.liveCanvas.height = S;
+        tr.liveImgData = tr.liveCtx.createImageData(S, S);
         tr.liveCanvas.style.imageRendering = 'pixelated';
         tr.liveStepAccum = 0;
         drawLive(tr);
@@ -940,6 +946,13 @@ window.liveResetNoise = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
     tr.liveCA.reset(true);
+    drawLive(tr);
+};
+
+window.liveSeed = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.liveCA) return;
+    tr.liveCA.resetTrained();
     drawLive(tr);
 };
 

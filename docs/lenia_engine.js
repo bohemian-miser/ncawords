@@ -17,19 +17,47 @@ export class LeniaCA {
     this._u = new Float32Array(plane);
     if (w.kernels) this._kern = w.kernels.map(k => Float32Array.from(k.flat()));
     if (w.basis) this._basis = w.basis.map(k => Float32Array.from(k.flat()));
-    this.reset(true);
+    // scaffold-conditioned runs: a prepattern clamped into the LAST channel
+    // after every step, exactly as in training. Only valid at the trained
+    // size, which the exporter records in w.size.
+    if (w.scaffold && size === (w.size ?? size))
+      this._scaf = Float32Array.from(w.scaffold.flat());
+    this.resetTrained();
+  }
+
+  // start the way training started (exporter records the recipe)
+  resetTrained() {
+    if (this.w.init === "seedblob") this.resetSeed();
+    else this.reset(true);
   }
 
   reset(noise = true) {
+    const low = this._scaf ? 0.15 : 0.6;   // scaffold runs train from low noise
     for (let i = 0; i < this.state.length; i++)
-      this.state[i] = noise ? Math.random() * 0.6 : 0;
-    if (!noise) { // a soft blob in the middle as the non-noise seed
-      const s = this.width, c = s >> 1;
-      for (let y = c - 6; y < c + 6; y++)
-        for (let x = c - 6; x < c + 6; x++)
-          for (let ch = 0; ch < this.C; ch++)
-            this.state[ch * s * s + y * s + x] = Math.random();
-    }
+      this.state[i] = noise ? Math.random() * low : 0;
+    this._applyScaffold();
+  }
+
+  // seed blob at the trained seed position (word runs without scaffold)
+  resetSeed() {
+    this.state.fill(0);
+    for (let i = 0; i < this.state.length; i++)
+      this.state[i] = Math.random() * 0.15;
+    const s = this.width;
+    const cx = this.w.seed_x ?? (s >> 1), cy = this.w.seed_y ?? (s >> 1);
+    for (let y = cy - 2; y <= cy + 2; y++)
+      for (let x = cx - 2; x <= cx + 2; x++) {
+        const yy = (y + s) % s, xx = (x + s) % s;
+        for (let ch = 0; ch < this.C; ch++)
+          this.state[ch * s * s + yy * s + xx] = 1.0;
+      }
+    this._applyScaffold();
+  }
+
+  _applyScaffold() {
+    if (!this._scaf) return;
+    const plane = this.width * this.height, off = (this.C - 1) * plane;
+    for (let i = 0; i < plane; i++) this.state[off + i] = this._scaf[i];
   }
 
   // toroidal correlation of channel plane `src` with kernel `k` into out
@@ -122,6 +150,7 @@ export class LeniaCA {
       const c = xn < 0 ? 0 : xn > 1 ? 1 : xn;
       st[i] = c + leak * (xn - c);
     }
+    this._applyScaffold();   // clamp the prepattern channel, as in training
   }
 
   damage(cx, cy, rad = 8) {
@@ -132,6 +161,7 @@ export class LeniaCA {
         if (dx2 < rad * rad)
           for (let c = 0; c < this.C; c++) this.state[c * plane + y * s + x] = 0;
       }
+    this._applyScaffold();   // damage never removes the clamped prepattern
   }
 
   readChannel(c) {
