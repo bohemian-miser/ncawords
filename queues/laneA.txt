@@ -1,0 +1,8 @@
+ns-sharedk-r0 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --rng-seed=0
+ns-sharedk-r1 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --rng-seed=1
+ns-sharedk-init-r0 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --train-init --rng-seed=0
+ns-sharedk-r2 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --rng-seed=2
+ns-sharedk-init-r1 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --train-init --rng-seed=1
+ns-sharedk-r3 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=sharedk --rng-seed=3
+ns-full-init-r0 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --train-init --rng-seed=0
+ns-full-init-r1 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --train-init --rng-seed=1

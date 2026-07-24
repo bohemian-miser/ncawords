@@ -1,0 +1,8 @@
+ns-dynwave-r0 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=dynwave --rng-seed=0
+ns-full-r0 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --rng-seed=0
+ns-dynwave-r1 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=dynwave --rng-seed=1
+ns-full-r1 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --rng-seed=1
+ns-dynwave-r2 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=dynwave --rng-seed=2
+ns-full-r2 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --rng-seed=2
+ns-dynwave-r3 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=dynwave --rng-seed=3
+ns-full-r3 nca.train_lenia --target=word:COMP --word-full --channels=6 --size=96 --word-scale=1.4 --steps=200000 --log-every=1000 --variant=full --rng-seed=3
