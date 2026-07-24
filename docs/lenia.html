@@ -26,6 +26,15 @@
   .live-canvas-wrap { display:inline-block; position:relative; background:#000; border:2px solid #444; border-radius:4px; }
   .lenia-live canvas { width:256px; height:256px; image-rendering:pixelated; cursor:crosshair; display:block; }
 
+  /* deprecated (persistent-stencil) runs */
+  .deprecated-card { opacity: 0.82; }
+  .deprecated-badge {
+    background: #5a1a1a; color: #ff9a9a; border: 1px solid #a33;
+    font-size: 0.72em; font-weight: bold; text-align: center;
+    padding: 4px 6px; border-radius: 4px; margin-bottom: 8px;
+    letter-spacing: 0.02em;
+  }
+
   /* card header title + info button */
   .card h3 { display:flex; align-items:center; justify-content:center; gap:6px; }
   .lenia-card-title { cursor:pointer; }
@@ -124,6 +133,11 @@
         <input type="range" id="loss-max" min="0" max="1000" value="1000" oninput="onLossRangeInput()">
         <span class="range-label" id="loss-max-label">–</span>
     </span>
+
+    <span><label style="cursor:pointer;">
+        <input type="checkbox" id="filter-show-deprecated" onchange="applyFilters()">
+        show deprecated
+    </label></span>
 </div>
 
 <div id="cards-container"></div>
@@ -174,6 +188,6 @@
 </div>
 
 <div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-4</div>
-<script type="module" src="lenia.js?v=lenia-11"></script>
+<script type="module" src="lenia.js?v=lenia-12"></script>
 </body>
 </html>

@@ -113,7 +113,33 @@ function leniaMethodsFrom(runs) {
 const seenIds = new Set();
 let sortKey = localStorage.getItem('lenia_sort') || 'newest';
 
-function buildSubtitle(args) {
+// ---------------------------------------------------------------------
+// Scaffold classification — the 'cw-*'/'p2-*' campaign trained some runs
+// with a stencil (prepattern) CLAMPED EVERY STEP for the entire run
+// ('cond':'scaffold'). That persistent-clamp cohort was retracted
+// (stencil-amplifier retraction; see ledger 'stencil-purge') because the
+// clamp was doing the work, not the learned physics. Newer trainers only
+// ever clamp at step 0 ('t0') or clamp during training but ablate it a
+// fraction of the time ('t0+ablate'), and always write scaf_persistent /
+// scaf_ablate to run.json so honest runs are distinguishable from the old
+// cohort, which predates both fields.
+// ---------------------------------------------------------------------
+
+function classifyScaffold(args, runName) {
+    if (!args || args.cond !== 'scaffold') return { deprecated: false, mode: null };
+    const nameHasT0 = /-t0/.test(runName || '');
+    const persistent = args.scaf_persistent;
+    const ablate = args.scaf_ablate;
+
+    if (persistent === true) return { deprecated: true, mode: null };
+    if (persistent === undefined && ablate === undefined && !nameHasT0) {
+        return { deprecated: true, mode: null };   // pre-dates both fields
+    }
+    if (typeof ablate === 'number' && ablate > 0) return { deprecated: false, mode: 't0+ablate' };
+    return { deprecated: false, mode: 't0' };
+}
+
+function buildSubtitle(args, scaffold) {
     if (!args) return '';
     const parts = [];
     if (args.variant) parts.push(args.variant);
@@ -126,7 +152,13 @@ function buildSubtitle(args) {
     if (args.params !== undefined) parts.push(`${args.params} params`);
     // cw-*/p2-* campaign runs carry extra args the original lenia-* runs
     // didn't; surface whichever of these are present.
-    if (args.cond !== undefined) parts.push(`cond:${args.cond}`);
+    if (args.cond === 'scaffold' && scaffold && scaffold.mode) {
+        parts.push(`scaffold:${scaffold.mode}`);
+    } else if (args.cond === 'scaffold' && scaffold && scaffold.deprecated) {
+        parts.push('scaffold:persistent');
+    } else if (args.cond !== undefined) {
+        parts.push(`cond:${args.cond}`);
+    }
     if (args.scaf_strength !== undefined) parts.push(`scaf ${args.scaf_strength}`);
     if (args.size !== undefined) parts.push(`${args.size}px`);
     if (args.train_init !== undefined) parts.push(args.train_init ? 'train_init' : 'no train_init');
@@ -173,8 +205,12 @@ async function fetchRunJson(tr, m) {
         m.finalLoss = lossVals.length ? lossVals[lossVals.length - 1] : null;
         m.minLoss = lossVals.length ? Math.min(...lossVals) : null;
         m.lossRel = extractLossRel(rj);
+        const scaffold = classifyScaffold(rj.args, m.title);
+        m.deprecated = scaffold.deprecated;
+        m.scaffoldMode = scaffold.mode;
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
-        if (sub) sub.innerText = buildSubtitle(rj.args) || '(no args recorded)';
+        if (sub) sub.innerText = buildSubtitle(rj.args, scaffold) || '(no args recorded)';
+        applyDeprecatedBadge(tr, m);
         tr.runJson = rj;
         renderStatus(tr);
         drawSparkline(tr, m);
@@ -184,6 +220,14 @@ async function fetchRunJson(tr, m) {
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
         if (sub) sub.innerText = '(run.json unavailable)';
     }
+}
+
+// Toggles the badge/opacity for a card once its run.json classification is
+// known. Visibility (show/hide by default) is handled separately in
+// applyFilters, alongside the other structured filters.
+function applyDeprecatedBadge(tr, m) {
+    if (tr.deprecatedBadgeObj) tr.deprecatedBadgeObj.style.display = m.deprecated ? 'block' : 'none';
+    if (tr.cardObj) tr.cardObj.classList.toggle('deprecated-card', !!m.deprecated);
 }
 
 function renderStatus(tr) {
@@ -391,6 +435,7 @@ function buildCard(m) {
     card.className = 'card';
     card.id = `card_${m.id}`;
     card.innerHTML = `
+        <div class="deprecated-badge" id="deprecated_${m.id}" style="display:none;">DEPRECATED — persistent stencil (see ledger)</div>
         <h3>
             <span class="lenia-card-title" id="title_${m.id}" title="Click for run details">${m.title}</span>
             <button class="info-btn" id="info_${m.id}" title="Run details">&#9432;</button>
@@ -477,6 +522,7 @@ function buildCard(m) {
         sparkLabelObj: card.querySelector(`#spark_label_${esc}`),
         titleObj: card.querySelector(`#title_${esc}`),
         infoBtn: card.querySelector(`#info_${esc}`),
+        deprecatedBadgeObj: card.querySelector(`#deprecated_${esc}`),
         // --- live physics widget state ---
         liveToggleBtn: card.querySelector(`#livetoggle_${esc}`),
         liveSecObj: card.querySelector(`#live_${esc}`),
@@ -708,6 +754,7 @@ function updateFilterBounds() {
 
 function applyFilters() {
     const q = (document.getElementById('search-box')?.value || '').toLowerCase();
+    const showDeprecated = !!document.getElementById('filter-show-deprecated')?.checked;
     const chSel = document.getElementById('filter-channels');
     const kSel = document.getElementById('filter-kernels');
     const chVal = chSel ? chSel.value : 'any';
@@ -741,6 +788,10 @@ function applyFilters() {
         const hay = (m.title + ' ' + (m.desc || '') + ' '
                      + (m.tags || []).join(' ')).toLowerCase();
         let visible = (!q || hay.includes(q));
+
+        // Deprecated (persistent-stencil) runs are hidden by default; a
+        // card without run.json yet is never treated as deprecated.
+        if (visible && m.deprecated && !showDeprecated) visible = false;
 
         if (visible && structuredActive) {
             const args = m.args;
