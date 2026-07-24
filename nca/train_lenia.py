@@ -358,6 +358,7 @@ def spec(x):
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
           size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
           cond="none", train_init=False, word_scale=1.0, scaf_strength=0.5,
+          scaf_holes=0, scaf_noise=0.0, scaf_t0=False,
           rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
     if variant in ("static1", "dyn1", "multik", "aniso", "wave"):
         C = 1   # single-channel families; sphere/sharedk/full/dynwave keep C
@@ -458,6 +459,8 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     "steps": steps, "batch": batch, "lr": lr,
                     "rng_seed": rng_seed, "params": n_par, "cond": cond,
                     "train_init": train_init, "word_scale": word_scale,
+                    "scaf_strength": scaf_strength, "scaf_holes": scaf_holes,
+                    "scaf_noise": scaf_noise, "scaf_t0": scaf_t0,
                     "size": size, "grok": grok},
                    C, 0, "noise", steps, device, tags=["lenia", variant, target])
 
@@ -477,11 +480,41 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         hi = t_min + int((t_max - t_min) * min(1.0, step / (steps * 0.5)))
         T = int(torch.randint(t_min, hi + 1, (1,)))
         x = make_init(tgt)
-        for _ in range(T):
+        # Anti-amplifier scaffold corruptions (the interrogation of phase 1
+        # showed a noiseless every-step clamp admits a trivial pointwise
+        # amplifier — these force actual development):
+        #   holes: per-sample boxes zeroed for the WHOLE rollout, loss still
+        #          on the full target => nonlocal completion required
+        #   noise: fresh per-step noise => temporal integration required
+        #   t0:    clamp only the first step => memory required
+        scaf_b = None
+        hole_mask = None
+        if scaf is not None:
+            scaf_b = scaf.expand(batch, 1, size, size).clone()
+            if scaf_holes > 0:
+                hole_mask = torch.ones(batch, 1, size, size, device=device)
+                on = (tgt > 0.3).nonzero()
+                for b in range(batch):
+                    for _ in range(scaf_holes):
+                        if len(on) == 0:
+                            break
+                        cy, cx = on[torch.randint(len(on), (1,))][0].tolist()
+                        hole_mask[b, :, max(0, cy - 3):cy + 3,
+                                  max(0, cx - 3):cx + 3] = 0.0
+                scaf_b = scaf_b * hole_mask
+        for ti in range(T):
             x = model.step(x, anneal)
-            if scaf is not None:
-                x = torch.cat([x[:, :-1], scaf.expand(batch, 1, size, size)], 1)
+            if scaf_b is not None and not (scaf_t0 and ti > 0):
+                s = scaf_b
+                if scaf_noise > 0:
+                    s = (s + torch.randn_like(s) * scaf_noise).clamp(0, 1)
+                x = torch.cat([x[:, :-1], s], 1)
         loss = loss_fn(x, tgt, tgt_spec, step)
+        if hole_mask is not None:
+            # hole-region completion, reported separately so gaming is visible
+            hm = (1 - hole_mask[:, 0]) * (tgt > 0.3).float()
+            hole_mse = float(((x[:, 0] - tgt) ** 2 * hm).sum()
+                             / (hm.sum() + 1e-8))
         rel = loss.item() / baseline
 
         opt.zero_grad(); loss.backward()
@@ -553,8 +586,10 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     # models cannot be reproduced from artifacts (phase-1 bug)
                     torch.save({"init_logits": init_logits.detach().cpu()},
                                str(Path(snap_dir) / "init.pth"))
-                meta.log(step, loss.item(), loss_rel=round(rel, 4),
-                         **({"word_stage": stages[stage]} if is_word else {}))
+                extra_log = {"word_stage": stages[stage]} if is_word else {}
+                if hole_mask is not None:
+                    extra_log["hole_mse"] = round(hole_mse, 4)
+                meta.log(step, loss.item(), loss_rel=round(rel, 4), **extra_log)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):
             save_checkpoint(snap_dir, step, model, opt, sched,
                             extra={"stage": stage, "stage_start": stage_start}
@@ -583,6 +618,9 @@ if __name__ == "__main__":
                    help="jointly learn the initial board (position in state)")
     p.add_argument("--word-scale", type=float, default=1.0)
     p.add_argument("--scaf-strength", type=float, default=0.5)
+    p.add_argument("--scaf-holes", type=int, default=0)
+    p.add_argument("--scaf-noise", type=float, default=0.0)
+    p.add_argument("--scaf-t0", action="store_true")
     p.add_argument("--size", type=int, default=64)
     p.add_argument("--grok", action="store_true",
                    help="AdamW + weight decay + constant LR for grokking runs")
@@ -593,5 +631,6 @@ if __name__ == "__main__":
     train(variant=a.variant, target=a.target, C=a.channels, K=a.kernels,
           steps=a.steps, word_full=a.word_full, grok=a.grok, cond=a.cond,
           train_init=a.train_init, word_scale=a.word_scale, size=a.size,
-          scaf_strength=a.scaf_strength,
+          scaf_strength=a.scaf_strength, scaf_holes=a.scaf_holes,
+          scaf_noise=a.scaf_noise, scaf_t0=a.scaf_t0,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
