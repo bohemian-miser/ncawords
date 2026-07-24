@@ -31,7 +31,7 @@ const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fie
 // campaigns ('coupling-weight' sweeps and a planned follow-up) write
 // 'cw-*' and 'p2-*' instead. List all three prefixes so the gallery
 // doesn't silently miss newer runs.
-const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-'];
+const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-', 'p3-', 'cwt0-', 'abl-', 'cse-'];
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function pad5(n) { return String(n).padStart(5, '0'); }
