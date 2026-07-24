@@ -14,7 +14,7 @@
 // browser via lenia_engine.js (LeniaCA) — a real from-scratch simulator,
 // distinct from the pre-rendered PNG timelapse above it.
 
-import { LeniaCA } from './lenia_engine.js?v=t0mode';
+import { LeniaCA } from './lenia_engine.js?v=nostencil';
 
 let methods = [];
 let cardTrackers = [];
@@ -31,7 +31,7 @@ const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fie
 // campaigns ('coupling-weight' sweeps and a planned follow-up) write
 // 'cw-*' and 'p2-*' instead. List all three prefixes so the gallery
 // doesn't silently miss newer runs.
-const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-', 'p3-', 'cwt0-', 'abl-', 'cse-'];
+const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-', 'p3-', 'cwt0-', 'abl-', 'cse-', 'gen-', 'ns-'];
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function pad5(n) { return String(n).padStart(5, '0'); }
@@ -114,29 +114,19 @@ const seenIds = new Set();
 let sortKey = localStorage.getItem('lenia_sort') || 'newest';
 
 // ---------------------------------------------------------------------
-// Scaffold classification — the 'cw-*'/'p2-*' campaign trained some runs
-// with a stencil (prepattern) CLAMPED EVERY STEP for the entire run
-// ('cond':'scaffold'). That persistent-clamp cohort was retracted
-// (stencil-amplifier retraction; see ledger 'stencil-purge') because the
-// clamp was doing the work, not the learned physics. Newer trainers only
-// ever clamp at step 0 ('t0') or clamp during training but ablate it a
-// fraction of the time ('t0+ablate'), and always write scaf_persistent /
-// scaf_ablate to run.json so honest runs are distinguishable from the old
-// cohort, which predates both fields.
+// Scaffold classification — any run trained with a stencil (prepattern)
+// clamped into the last channel at any point during training
+// ('args.cond === "scaffold"') is deprecated. No more stencil, ever: it
+// doesn't matter whether the clamp was persistent-every-step, t0-only, or
+// ablated a fraction of the time (scaf_persistent/scaf_ablate/the '-t0'
+// name suffix) — every scaffold-conditioned cohort (cw-*, p2-*, p3-*,
+// cwt0-*, abl-*, gen-* runs) is retracted alike. Only runs trained with
+// cond !== 'scaffold' (e.g. the newer ns-* 'none' runs) are current.
 // ---------------------------------------------------------------------
 
-function classifyScaffold(args, runName) {
-    if (!args || args.cond !== 'scaffold') return { deprecated: false, mode: null };
-    const nameHasT0 = /-t0/.test(runName || '');
-    const persistent = args.scaf_persistent;
-    const ablate = args.scaf_ablate;
-
-    if (persistent === true) return { deprecated: true, mode: null };
-    if (persistent === undefined && ablate === undefined && !nameHasT0) {
-        return { deprecated: true, mode: null };   // pre-dates both fields
-    }
-    if (typeof ablate === 'number' && ablate > 0) return { deprecated: false, mode: 't0+ablate' };
-    return { deprecated: false, mode: 't0' };
+function classifyScaffold(args) {
+    if (!args || args.cond !== 'scaffold') return { deprecated: false };
+    return { deprecated: true };
 }
 
 function buildSubtitle(args, scaffold) {
@@ -152,10 +142,8 @@ function buildSubtitle(args, scaffold) {
     if (args.params !== undefined) parts.push(`${args.params} params`);
     // cw-*/p2-* campaign runs carry extra args the original lenia-* runs
     // didn't; surface whichever of these are present.
-    if (args.cond === 'scaffold' && scaffold && scaffold.mode) {
-        parts.push(`scaffold:${scaffold.mode}`);
-    } else if (args.cond === 'scaffold' && scaffold && scaffold.deprecated) {
-        parts.push('scaffold:persistent');
+    if (args.cond === 'scaffold' && scaffold && scaffold.deprecated) {
+        parts.push('scaffold:deprecated');
     } else if (args.cond !== undefined) {
         parts.push(`cond:${args.cond}`);
     }
@@ -205,9 +193,8 @@ async function fetchRunJson(tr, m) {
         m.finalLoss = lossVals.length ? lossVals[lossVals.length - 1] : null;
         m.minLoss = lossVals.length ? Math.min(...lossVals) : null;
         m.lossRel = extractLossRel(rj);
-        const scaffold = classifyScaffold(rj.args, m.title);
+        const scaffold = classifyScaffold(rj.args);
         m.deprecated = scaffold.deprecated;
-        m.scaffoldMode = scaffold.mode;
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
         if (sub) sub.innerText = buildSubtitle(rj.args, scaffold) || '(no args recorded)';
         applyDeprecatedBadge(tr, m);
@@ -435,7 +422,7 @@ function buildCard(m) {
     card.className = 'card';
     card.id = `card_${m.id}`;
     card.innerHTML = `
-        <div class="deprecated-badge" id="deprecated_${m.id}" style="display:none;">DEPRECATED — persistent stencil (see ledger)</div>
+        <div class="deprecated-badge" id="deprecated_${m.id}" style="display:none;">DEPRECATED — stencil-trained (see ledger)</div>
         <h3>
             <span class="lenia-card-title" id="title_${m.id}" title="Click for run details">${m.title}</span>
             <button class="info-btn" id="info_${m.id}" title="Run details">&#9432;</button>
@@ -485,8 +472,7 @@ function buildCard(m) {
                 <button id="liveplay_${m.id}" title="Play/pause live simulation">&#9654;</button>
                 <button id="livereset_${m.id}" title="Reset to random noise">Reset noise</button>
                 <button id="liveseed_${m.id}" title="Reset the way training started (seed blob / scaffold)">Seed</button>
-                <button id="liveclear_${m.id}" title="Clear ALL channels including the stencil">Clear</button>
-                <button id="livestencil_${m.id}" title="Toggle the clamped prepattern channel (shown in blue)" style="display:none;">Stencil: on</button>
+                <button id="liveclear_${m.id}" title="Clear all channels">Clear</button>
                 <button id="livechans_${m.id}" title="Show every channel as a grayscale heatmap">Channels</button>
                 <label style="margin-left:6px;">speed <input type="range" id="livespeed_${m.id}" min="0.1" max="10" step="0.1" value="1" style="width:60px;"></label>
             </div>
@@ -552,8 +538,6 @@ function buildCard(m) {
     if (tr.liveseedBtn) tr.liveseedBtn.onclick = () => window.liveSeed(m.id);
     tr.liveclearBtn = card.querySelector(`#liveclear_${esc}`);
     tr.liveclearBtn.onclick = () => window.liveClear(m.id);
-    tr.livestencilBtn = document.getElementById(`livestencil_${m.id}`);
-    if (tr.livestencilBtn) tr.livestencilBtn.onclick = () => window.liveStencil(m.id);
     tr.livechansBtn = document.getElementById(`livechans_${m.id}`);
     tr.livechanGrid = document.getElementById(`livechangrid_${m.id}`);
     if (tr.livechansBtn) tr.livechansBtn.onclick = () => window.liveChannels(m.id);
@@ -789,7 +773,7 @@ function applyFilters() {
                      + (m.tags || []).join(' ')).toLowerCase();
         let visible = (!q || hay.includes(q));
 
-        // Deprecated (persistent-stencil) runs are hidden by default; a
+        // Deprecated (stencil-trained) runs are hidden by default; a
         // card without run.json yet is never treated as deprecated.
         if (visible && m.deprecated && !showDeprecated) visible = false;
 
@@ -997,15 +981,6 @@ async function activateOrCollapseLive(tr) {
             tr.liveseedBtn.style.display =
                 (ini === 'seedblob' || ini === 'scaffold') ? '' : 'none';
         }
-        if (tr.liveCA.hasScaffold && tr.livestencilBtn) {
-            tr.livestencilBtn.style.display = '';
-            // stencil OFF by default — nothing hidden unless you opt in
-            tr.liveCA.setScaffold(false);
-            tr.livestencilBtn.innerText = 'Stencil: OFF';
-            tr.liveStatusObj.innerText =
-                'scaffold-conditioned run; stencil is OFF (this physics was trained WITH it — Stencil: on to see)';
-            drawLive(tr);
-        }
         runLiveLoop(tr);
     } catch (e) {
         console.error('live physics load failed', e);
@@ -1031,10 +1006,6 @@ window.liveResetNoise = function (id) {
 window.liveSeed = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
-    if (tr.liveCA.hasScaffold) {
-        tr.liveCA.setScaffold(true);   // Seed restores the trained setup
-        if (tr.livestencilBtn) tr.livestencilBtn.innerText = 'Stencil: on';
-    }
     tr.liveCA.resetTrained();
     drawLive(tr);
 };
@@ -1063,7 +1034,7 @@ function renderLiveChannels(tr) {
             cv.style.imageRendering = 'pixelated';
             cv.style.border = '1px solid #4443';
             const lab = document.createElement('div');
-            lab.innerText = c === ca.C - 1 && ca.hasScaffold ? `ch ${c} (stencil)` : `ch ${c}`;
+            lab.innerText = `ch ${c}`;
             lab.style.fontSize = '0.65rem';
             lab.style.opacity = '0.7';
             wrap.appendChild(cv); wrap.appendChild(lab);
@@ -1085,29 +1056,9 @@ function renderLiveChannels(tr) {
     }
 }
 
-window.liveStencil = function (id) {
-    const tr = cardTrackers.find(t => t.id === id);
-    if (!tr || !tr.liveCA || !tr.liveCA.hasScaffold) return;
-    const on = !tr.liveCA.scaffoldOn;
-    tr.liveCA.setScaffold(on);
-    if (tr.livestencilBtn) tr.livestencilBtn.innerText = on ? 'Stencil: on' : 'Stencil: OFF';
-    if (tr.liveStatusObj) tr.liveStatusObj.innerText = on
-        ? 'prepattern clamped every step (blue) — the physics inks this stencil'
-        : 'stencil removed — watch whether the pattern survives without it';
-    drawLive(tr);
-};
-
 window.liveClear = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
-    // Clear means CLEAR: every channel including the clamped stencil.
-    // Re-enable it with the Stencil button or Seed.
-    if (tr.liveCA.hasScaffold) {
-        tr.liveCA.setScaffold(false);
-        if (tr.livestencilBtn) tr.livestencilBtn.innerText = 'Stencil: OFF';
-        if (tr.liveStatusObj) tr.liveStatusObj.innerText =
-            'fully cleared (stencil off) — Seed or Stencil: on to restore';
-    }
     tr.liveCA.reset(false);
     drawLive(tr);
 };

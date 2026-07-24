@@ -17,14 +17,10 @@ export class LeniaCA {
     this._u = new Float32Array(plane);
     if (w.kernels) this._kern = w.kernels.map(k => Float32Array.from(k.flat()));
     if (w.basis) this._basis = w.basis.map(k => Float32Array.from(k.flat()));
-    // scaffold-conditioned runs: a prepattern clamped into the LAST channel
-    // after every step, exactly as in training. Only valid at the trained
-    // size, which the exporter records in w.size.
-    if (w.scaffold && size === (w.size ?? size)) {
-      this._scaf = Float32Array.from(w.scaffold.flat());
-      // t0-trained runs see the stencil at reset ONLY, never re-clamped
-      this._scafT0 = w.scaf_mode === "t0";
-    }
+    // No more stencil, ever: a run's weights.json may still carry a
+    // w.scaffold prepattern (older exports), but it is never loaded or
+    // applied here — scaffold-conditioned runs simply play their learned
+    // physics with nothing clamped in.
     this.resetTrained();
   }
 
@@ -35,10 +31,8 @@ export class LeniaCA {
   }
 
   reset(noise = true) {
-    const low = this._scaf ? 0.15 : 0.6;   // scaffold runs train from low noise
     for (let i = 0; i < this.state.length; i++)
-      this.state[i] = noise ? Math.random() * low : 0;
-    this._applyScaffold();
+      this.state[i] = noise ? Math.random() * 0.6 : 0;
   }
 
   // seed blob at the trained seed position (word runs without scaffold)
@@ -54,29 +48,16 @@ export class LeniaCA {
         for (let ch = 0; ch < this.C; ch++)
           this.state[ch * s * s + yy * s + xx] = 1.0;
       }
-    this._applyScaffold();
   }
 
-  _applyScaffold() {
-    if (!this._scaf || this._scafOff) return;
-    const plane = this.width * this.height, off = (this.C - 1) * plane;
-    for (let i = 0; i < plane; i++) this.state[off + i] = this._scaf[i];
-  }
+  // Inert: no scaffold is ever loaded, so there is nothing to apply.
+  _applyScaffold() {}
 
-  get hasScaffold() { return !!this._scaf; }
-  get scaffoldOn() { return !!this._scaf && !this._scafOff; }
+  get hasScaffold() { return false; }
+  get scaffoldOn() { return false; }
 
-  // Toggle the clamped prepattern. Turning it OFF also zeroes the channel so
-  // the physics runs genuinely stencil-free (interrogation experiment 5).
-  setScaffold(on) {
-    if (!this._scaf) return;
-    this._scafOff = !on;
-    if (on) this._applyScaffold();
-    else {
-      const plane = this.width * this.height, off = (this.C - 1) * plane;
-      for (let i = 0; i < plane; i++) this.state[off + i] = 0;
-    }
-  }
+  // Inert: kept so any lingering caller doesn't throw, but a no-op.
+  setScaffold() {}
 
   // toroidal correlation of channel plane `src` with kernel `k` into out
   _conv(srcOff, k, out) {
@@ -168,7 +149,6 @@ export class LeniaCA {
       const c = xn < 0 ? 0 : xn > 1 ? 1 : xn;
       st[i] = c + leak * (xn - c);
     }
-    if (!this._scafT0) this._applyScaffold();   // persistent-mode clamp only
   }
 
   damage(cx, cy, rad = 8) {
@@ -179,7 +159,6 @@ export class LeniaCA {
         if (dx2 < rad * rad)
           for (let c = 0; c < this.C; c++) this.state[c * plane + y * s + x] = 0;
       }
-    if (!this._scafT0) this._applyScaffold();   // persistent mode only
   }
 
   readChannel(c) {
