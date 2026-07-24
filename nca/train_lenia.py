@@ -357,7 +357,7 @@ def spec(x):
 
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
           size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
-          cond="none", train_init=False, word_scale=1.0,
+          cond="none", train_init=False, word_scale=1.0, scaf_strength=0.5,
           rng_seed=0, log_every=150, ckpt_every=500, snap_dir=None):
     if variant in ("static1", "dyn1", "multik", "aniso", "wave"):
         C = 1   # single-channel families; sphere/sharedk/full/dynwave keep C
@@ -416,7 +416,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
 
     scaf = None
     if cond == "scaffold":
-        scaf = (tgt * 0.5)[None, None]     # faint prepattern, clamped in
+        scaf = (tgt * scaf_strength)[None, None]   # faint prepattern, clamped in
 
     init_logits = None
     if train_init:
@@ -502,7 +502,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                 tgt = torch.from_numpy(
                     word_target(stages[stage], size, size, word_scale)).to(device)
                 if scaf is not None:
-                    scaf = (tgt * 0.5)[None, None]
+                    scaf = (tgt * scaf_strength)[None, None]
                 with torch.no_grad():
                     baseline = float(loss_fn(make_init(tgt), tgt, None)) + 1e-8
                 if snap_dir:
@@ -548,6 +548,11 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     Image.fromarray(rgb).resize((C * 24,) * 2, Image.NEAREST) \
                         .save(Path(snap_dir) / f"COUPLING_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
+                if init_logits is not None:
+                    # persist the learned init board — without this the -init
+                    # models cannot be reproduced from artifacts (phase-1 bug)
+                    torch.save({"init_logits": init_logits.detach().cpu()},
+                               str(Path(snap_dir) / "init.pth"))
                 meta.log(step, loss.item(), loss_rel=round(rel, 4),
                          **({"word_stage": stages[stage]} if is_word else {}))
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):
@@ -577,6 +582,7 @@ if __name__ == "__main__":
     p.add_argument("--train-init", action="store_true",
                    help="jointly learn the initial board (position in state)")
     p.add_argument("--word-scale", type=float, default=1.0)
+    p.add_argument("--scaf-strength", type=float, default=0.5)
     p.add_argument("--size", type=int, default=64)
     p.add_argument("--grok", action="store_true",
                    help="AdamW + weight decay + constant LR for grokking runs")
@@ -587,4 +593,5 @@ if __name__ == "__main__":
     train(variant=a.variant, target=a.target, C=a.channels, K=a.kernels,
           steps=a.steps, word_full=a.word_full, grok=a.grok, cond=a.cond,
           train_init=a.train_init, word_scale=a.word_scale, size=a.size,
+          scaf_strength=a.scaf_strength,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
