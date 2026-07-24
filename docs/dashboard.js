@@ -15,6 +15,63 @@ const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fie
 
 function pad5(n) { return String(n).padStart(5, '0'); }
 
+// ---------------------------------------------------------------------
+// Relative-time / recency helpers — mirrors lenia.js's relTime/humanize-
+// Duration exactly (kept as a duplicate rather than a shared import since
+// dashboard.js is a plain <script>, not a module).
+// ---------------------------------------------------------------------
+
+const RECENT_MS = 20 * 60 * 1000;   // 20 minutes
+
+function relTime(iso) {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return null;
+    const deltaMs = Date.now() - t;
+    const s = deltaMs / 1000;
+    if (s < 60) return `${Math.max(0, Math.round(s))}s ago`;
+    const m = s / 60;
+    if (m < 60) return `${Math.round(m)}m ago`;
+    const h = m / 60;
+    if (h < 24) return `${h.toFixed(1)}h ago`;
+    const d = h / 24;
+    return `${d.toFixed(1)}d ago`;
+}
+
+function humanizeDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return null;
+    const h = ms / 3600000;
+    if (h < 1) return `${Math.round(ms / 60000)}m`;
+    return `${h.toFixed(1)}h`;
+}
+
+// Last-snapshot recency line, shared by every card.
+function renderLastSnapshot(tr) {
+    if (!tr.lastSnapObj) return;
+    const iso = (tr.runJson && tr.runJson.updated_at) || tr.updated || null;
+    const rel = relTime(iso);
+    if (!rel) { tr.lastSnapObj.innerHTML = ''; return; }
+    const isRecent = (Date.now() - Date.parse(iso)) < RECENT_MS;
+    const cls = isRecent ? 'recent' : 'stale';
+    const title = isRecent ? 'recently active' : 'inactive';
+    tr.lastSnapObj.innerHTML =
+        `<span class="snap-dot ${cls}" title="${title}">&#9679;</span>last snapshot ${rel}`;
+}
+
+// Best-effort run.json fetch, used only to enrich the card's status line
+// with duration/rate and the last-snapshot line with a precise updated_at.
+// Failure is silent — the bucket-listing `updated` timestamp is already a
+// perfectly good fallback for both.
+async function fetchRunJsonForCard(tr) {
+    try {
+        const res = await fetch(tr.dir + 'run.json?t=' + Date.now());
+        if (!res.ok) return;
+        tr.runJson = await res.json();
+        renderLastSnapshot(tr);
+        updateOverviewUI();   // re-render the status line with duration appended
+    } catch (e) { /* run.json not published yet — fine, fall back silently */ }
+}
+
 async function listCloudRuns(onPage) {
     const runs = {};
     let pageToken = null;
@@ -93,6 +150,7 @@ function addOrUpdateCards(list) {
             if (tr) {
                 if (m.vertex_state) tr.vertexState = m.vertex_state;
                 if (m.updated) tr.updated = m.updated;
+                renderLastSnapshot(tr);
             }
             const known = methods.find(x => x.id === m.id);
             if (known) {
@@ -134,9 +192,10 @@ function addOrUpdateCards(list) {
             </div>
             ${leniaBlock}
             <div class="status" id="live_status_${m.id}">Loading...</div>
+            <div class="last-snapshot" id="lastsnap_${m.id}"></div>
         `;
         container.appendChild(card);
-        cardTrackers.push({
+        const tr = {
             id: m.id,
             dir: m.dir,
             updated: m.updated || '',
@@ -144,9 +203,14 @@ function addOrUpdateCards(list) {
             imgObj: card.querySelector(`#live_${CSS.escape(m.id)}`),
             tgtObj: card.querySelector(`#live_tgt_${CSS.escape(m.id)}`),
             statusObj: card.querySelector(`#live_status_${CSS.escape(m.id)}`),
+            lastSnapObj: card.querySelector(`#lastsnap_${CSS.escape(m.id)}`),
             vertexState: m.vertex_state || null,
-            lastKnownStep: -100
-        });
+            lastKnownStep: -100,
+            runJson: null
+        };
+        cardTrackers.push(tr);
+        renderLastSnapshot(tr);   // shows the listing-derived timestamp immediately
+        fetchRunJsonForCard(tr);   // then refines it with run.json's updated_at + duration/rate
     });
     if (added || resort) sortCards();
     if (added) initializeDropdown();
@@ -215,6 +279,7 @@ async function bootstrap() {
         };
     }
     setInterval(refreshMethods, 25000);   // new runs appear without reload
+    setInterval(() => cardTrackers.forEach(renderLastSnapshot), 60000);   // re-render cached relTime labels
 }
 
 bootstrap().catch(err => console.error("Dashboard bootstrap failed", err));
@@ -285,6 +350,27 @@ function initializeDropdown() {
         });
 }
 
+// Appends " — loss 0.1067 — 4.6h" (whichever parts run.json actually has)
+// to a card's status line, once run.json has been fetched.
+function runJsonStatusSuffix(rj) {
+    if (!rj) return '';
+    const parts = [];
+    if (Array.isArray(rj.losses) && rj.losses.length) {
+        const last = rj.losses[rj.losses.length - 1];
+        const lv = Array.isArray(last) ? Number(last[1])
+            : (last && typeof last === 'object' ? Number(last.loss) : NaN);
+        if (Number.isFinite(lv)) parts.push(`loss ${lv.toFixed(4)}`);
+    }
+    if (rj.started_at && rj.updated_at) {
+        const s = Date.parse(rj.started_at), u = Date.parse(rj.updated_at);
+        if (Number.isFinite(s) && Number.isFinite(u) && u >= s) {
+            const dur = humanizeDuration(u - s);
+            if (dur) parts.push(dur);
+        }
+    }
+    return parts.length ? ' — ' + parts.join(' — ') : '';
+}
+
 function updateOverviewUI() {
     cardTrackers.forEach(ct => {
         const currentHighest = serverState[ct.dir];
@@ -327,6 +413,8 @@ function updateOverviewUI() {
             } else {
                 ct.statusObj.innerText = (ct.lastStatusText || '');
             }
+            ct.statusObj.innerText += runJsonStatusSuffix(ct.runJson);
+            renderLastSnapshot(ct);
         }
     });
 }

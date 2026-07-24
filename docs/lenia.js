@@ -36,6 +36,35 @@ const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function pad5(n) { return String(n).padStart(5, '0'); }
 
+// ---------------------------------------------------------------------
+// Relative-time / recency helpers — shared by the card's "last snapshot"
+// line and the detail modal's Started/Last update/Duration/Rate rows.
+// ---------------------------------------------------------------------
+
+const RECENT_MS = 20 * 60 * 1000;   // 20 minutes
+
+function relTime(iso) {
+    if (!iso) return null;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return null;
+    const deltaMs = Date.now() - t;
+    const s = deltaMs / 1000;
+    if (s < 60) return `${Math.max(0, Math.round(s))}s ago`;
+    const m = s / 60;
+    if (m < 60) return `${Math.round(m)}m ago`;
+    const h = m / 60;
+    if (h < 24) return `${h.toFixed(1)}h ago`;
+    const d = h / 24;
+    return `${d.toFixed(1)}d ago`;
+}
+
+function humanizeDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return null;
+    const h = ms / 3600000;
+    if (h < 1) return `${Math.round(ms / 60000)}m`;
+    return `${h.toFixed(1)}h`;
+}
+
 function mergeSteps(dst, src) {
     let changed = false;
     (src || []).forEach(s => {
@@ -203,6 +232,7 @@ async function fetchRunJson(tr, m) {
         drawSparkline(tr, m);
         updateFilterBounds();
         applyFilters();   // desc/tags/args/loss just arrived; re-run all filters
+        if (openModalId === m.id) renderModalMeta(m.id);   // modal open mid-fetch
     } catch (e) {
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
         if (sub) sub.innerText = '(run.json unavailable)';
@@ -227,6 +257,23 @@ function renderStatus(tr) {
     let text = step !== null && step !== undefined ? `Step ${step}` : 'Waiting for snapshots…';
     if (lp) text += ` — loss ${Number(lp[1]).toFixed(4)}`;
     statusObj.innerText = text;
+    renderLastSnapshot(tr);
+}
+
+// Last-snapshot recency line, shared by every card. Prefers run.json's
+// updated_at (server-side "when did the job last write anything"); falls
+// back to the bucket listing's max per-file `updated` timestamp when
+// run.json hasn't loaded (or doesn't have the field) yet.
+function renderLastSnapshot(tr) {
+    if (!tr.lastSnapObj) return;
+    const iso = (tr.runJson && tr.runJson.updated_at) || tr.updated || null;
+    const rel = relTime(iso);
+    if (!rel) { tr.lastSnapObj.innerHTML = ''; return; }
+    const isRecent = (Date.now() - Date.parse(iso)) < RECENT_MS;
+    const cls = isRecent ? 'recent' : 'stale';
+    const title = isRecent ? 'recently active' : 'inactive';
+    tr.lastSnapObj.innerHTML =
+        `<span class="snap-dot ${cls}" title="${title}">&#9679;</span>last snapshot ${rel}`;
 }
 
 // Nearest step <= target in an ascending-sorted array; falls back to the
@@ -460,6 +507,7 @@ function buildCard(m) {
             </div>
         </div>
         <div class="status" id="status_${m.id}">Loading…</div>
+        <div class="last-snapshot" id="lastsnap_${m.id}"></div>
         <div class="lenia-live-toggle">
             <button id="livetoggle_${m.id}">&#9654; Run live</button>
         </div>
@@ -503,6 +551,7 @@ function buildCard(m) {
         speedObj: card.querySelector(`#speed_${esc}`),
         frameLabelObj: card.querySelector(`#frame_${esc}`),
         statusObj: card.querySelector(`#status_${esc}`),
+        lastSnapObj: card.querySelector(`#lastsnap_${esc}`),
         playBtn: card.querySelector(`#play_${esc}`),
         sparkCanvas: card.querySelector(`#spark_${esc}`),
         sparkLabelObj: card.querySelector(`#spark_label_${esc}`),
@@ -562,6 +611,7 @@ function addOrUpdateCards(list) {
             const tr = cardTrackers.find(t => t.id === m.id);
             const known = methods.find(x => x.id === m.id);
             if (tr) {
+                if (m.updated && m.updated > (tr.updated || '')) tr.updated = m.updated;
                 const gotComp = mergeSteps(tr.compSteps, m.compSteps);
                 const gotKernel = mergeSteps(tr.kernelSteps, m.kernelSteps);
                 const gotCoupling = mergeSteps(tr.couplingSteps, m.couplingSteps);
@@ -824,10 +874,55 @@ function setModalImage(imgId, labelId, labelPrefix, src, step) {
     }
 }
 
+let openModalId = null;
+
+// Started / Last update / Duration / Rate / Progress rows, derived from
+// run.json's started_at/updated_at/step/steps_total. Any row whose inputs
+// are missing is simply omitted rather than shown with placeholder dashes.
+function renderModalMeta(id) {
+    const box = document.getElementById('lm-timing');
+    if (!box) return;
+    const tr = cardTrackers.find(t => t.id === id);
+    const rj = tr && tr.runJson;
+    if (!rj) { box.innerHTML = '<div class="lm-meta-row" style="color:#666;">(run.json not loaded yet)</div>'; return; }
+
+    const startedIso = rj.started_at;
+    const updatedIso = rj.updated_at;
+    const startedMs = startedIso ? Date.parse(startedIso) : NaN;
+    const updatedMs = updatedIso ? Date.parse(updatedIso) : NaN;
+    const rows = [];
+
+    if (Number.isFinite(startedMs)) {
+        rows.push(`<span class="lm-meta-label">Started:</span> ${new Date(startedMs).toLocaleString()}`);
+    }
+    if (Number.isFinite(updatedMs)) {
+        const rel = relTime(updatedIso);
+        rows.push(`<span class="lm-meta-label">Last update:</span> ${new Date(updatedMs).toLocaleString()}${rel ? ` (${rel})` : ''}`);
+    }
+    let durationMs = null;
+    if (Number.isFinite(startedMs) && Number.isFinite(updatedMs) && updatedMs >= startedMs) {
+        durationMs = updatedMs - startedMs;
+        const dur = humanizeDuration(durationMs);
+        if (dur) rows.push(`<span class="lm-meta-label">Duration:</span> ${dur}`);
+    }
+    if (durationMs !== null && typeof rj.step === 'number' && durationMs > 0) {
+        const ratePerHour = rj.step / (durationMs / 3600000);
+        rows.push(`<span class="lm-meta-label">Rate:</span> ${ratePerHour.toFixed(0)} steps/hour`);
+    }
+    if (typeof rj.step === 'number' && typeof rj.steps_total === 'number') {
+        rows.push(`<span class="lm-meta-label">Progress:</span> ${rj.step}/${rj.steps_total}`);
+    }
+
+    box.innerHTML = rows.length
+        ? rows.map(r => `<div class="lm-meta-row">${r}</div>`).join('')
+        : '<div class="lm-meta-row" style="color:#666;">(no timing data recorded)</div>';
+}
+
 function openLeniaModal(id) {
     const tr = cardTrackers.find(t => t.id === id);
     const m = methods.find(x => x.id === id);
     if (!tr || !m) return;
+    openModalId = id;
 
     document.getElementById('lm-title').innerText = m.title;
     document.getElementById('lm-desc').innerText = m.desc || '(no run.json yet)';
@@ -876,12 +971,14 @@ function openLeniaModal(id) {
     setModalImage('lm-coupling', 'lm-coupling-label', 'Latest COUPLING',
         lastCoupling !== null ? `${tr.dir}COUPLING_${pad5(lastCoupling)}.png` : null, lastCoupling);
 
+    renderModalMeta(id);
     document.getElementById('lenia-modal').style.display = 'block';
 }
 window.openLeniaModal = openLeniaModal;
 
 window.closeLeniaModal = function () {
     document.getElementById('lenia-modal').style.display = 'none';
+    openModalId = null;
 };
 
 window.handleLeniaOverlayClick = function () {
@@ -1079,11 +1176,22 @@ async function refreshRuns() {
     } catch (e) { console.error('lenia refresh failed', e); }
 }
 
+// Cheap re-render of the already-fetched relative-time labels — no network
+// activity, just rewrites text nodes so "3m ago" keeps ticking between the
+// real 20s bucket refreshes.
+function refreshTimeLabels() {
+    cardTrackers.forEach(renderLastSnapshot);
+    if (openModalId && document.getElementById('lenia-modal')?.style.display === 'block') {
+        renderModalMeta(openModalId);
+    }
+}
+
 async function bootstrap() {
     const sortSel = document.getElementById('sort-select');
     if (sortSel) sortSel.value = sortKey;
     await listLeniaRuns(runs => addOrUpdateCards(leniaMethodsFrom(runs)));
     setInterval(refreshRuns, 20000);   // new runs / snapshots appear without reload
+    setInterval(refreshTimeLabels, 60000);   // re-render cached relTime labels
 }
 
 bootstrap().catch(err => console.error('Lenia gallery bootstrap failed', err));

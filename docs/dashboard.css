@@ -23,6 +23,16 @@ h1 { text-align: center; margin-bottom: 30px; letter-spacing: 2px; }
 .gallery-item img { width: 150px; height: 150px; object-fit: contain; image-rendering: pixelated; display: block; margin-bottom: 8px; background: #000; }
 .gallery-item span { font-size: 0.85em; color: #ccc; }
 
+/* Last-snapshot recency line (dashboard + lenia cards) */
+.last-snapshot { font-size: 0.78em; color: #888; margin-top: 4px; }
+.snap-dot { font-size: 0.9em; margin-right: 3px; }
+.snap-dot.recent { color: #3ecf5f; }
+.snap-dot.stale { color: #777; }
+
+/* Detail-modal meta rows (Started / Last update / Duration / Rate / Progress) */
+.lm-meta-row { font-size: 0.85em; color: #ccc; margin: 2px 0; }
+.lm-meta-row .lm-meta-label { color: #888; }
+
 @keyframes pulse {
   0% { opacity: 0.5; }
   50% { opacity: 1; }
