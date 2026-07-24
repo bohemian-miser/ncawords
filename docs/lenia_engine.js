@@ -55,9 +55,24 @@ export class LeniaCA {
   }
 
   _applyScaffold() {
-    if (!this._scaf) return;
+    if (!this._scaf || this._scafOff) return;
     const plane = this.width * this.height, off = (this.C - 1) * plane;
     for (let i = 0; i < plane; i++) this.state[off + i] = this._scaf[i];
+  }
+
+  get hasScaffold() { return !!this._scaf; }
+  get scaffoldOn() { return !!this._scaf && !this._scafOff; }
+
+  // Toggle the clamped prepattern. Turning it OFF also zeroes the channel so
+  // the physics runs genuinely stencil-free (interrogation experiment 5).
+  setScaffold(on) {
+    if (!this._scaf) return;
+    this._scafOff = !on;
+    if (on) this._applyScaffold();
+    else {
+      const plane = this.width * this.height, off = (this.C - 1) * plane;
+      for (let i = 0; i < plane; i++) this.state[off + i] = 0;
+    }
   }
 
   // toroidal correlation of channel plane `src` with kernel `k` into out

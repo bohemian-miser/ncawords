@@ -14,7 +14,7 @@
 // browser via lenia_engine.js (LeniaCA) — a real from-scratch simulator,
 // distinct from the pre-rendered PNG timelapse above it.
 
-import { LeniaCA } from './lenia_engine.js?v=seed1';
+import { LeniaCA } from './lenia_engine.js?v=stencil1';
 
 let methods = [];
 let cardTrackers = [];
@@ -440,10 +440,13 @@ function buildCard(m) {
                 <button id="liveplay_${m.id}" title="Play/pause live simulation">&#9654;</button>
                 <button id="livereset_${m.id}" title="Reset to random noise">Reset noise</button>
                 <button id="liveseed_${m.id}" title="Reset the way training started (seed blob / scaffold)">Seed</button>
-                <button id="liveclear_${m.id}" title="Clear to empty">Clear</button>
+                <button id="liveclear_${m.id}" title="Clear ALL channels including the stencil">Clear</button>
+                <button id="livestencil_${m.id}" title="Toggle the clamped prepattern channel (shown in blue)" style="display:none;">Stencil: on</button>
+                <button id="livechans_${m.id}" title="Show every channel as a grayscale heatmap">Channels</button>
                 <label style="margin-left:6px;">speed <input type="range" id="livespeed_${m.id}" min="0.1" max="10" step="0.1" value="1" style="width:60px;"></label>
             </div>
             <div class="run-desc" id="livestatus_${m.id}"></div>
+            <div id="livechangrid_${m.id}" style="display:none; gap:4px; flex-wrap:wrap; margin-top:6px;"></div>
         </div>
     `;
     container.appendChild(card);
@@ -503,6 +506,11 @@ function buildCard(m) {
     if (tr.liveseedBtn) tr.liveseedBtn.onclick = () => window.liveSeed(m.id);
     tr.liveclearBtn = card.querySelector(`#liveclear_${esc}`);
     tr.liveclearBtn.onclick = () => window.liveClear(m.id);
+    tr.livestencilBtn = document.getElementById(`livestencil_${m.id}`);
+    if (tr.livestencilBtn) tr.livestencilBtn.onclick = () => window.liveStencil(m.id);
+    tr.livechansBtn = document.getElementById(`livechans_${m.id}`);
+    tr.livechanGrid = document.getElementById(`livechangrid_${m.id}`);
+    if (tr.livechansBtn) tr.livechansBtn.onclick = () => window.liveChannels(m.id);
     tr.liveCanvas.addEventListener('mousedown', (e) => { tr.liveDamaging = true; liveDamageAt(tr, e); });
     tr.liveCanvas.addEventListener('mousemove', (e) => { if (tr.liveDamaging) liveDamageAt(tr, e); });
     tr.liveCanvas.addEventListener('mouseup', () => { tr.liveDamaging = false; });
@@ -870,6 +878,7 @@ function drawLive(tr) {
     const out = tr.liveCA.readRGBA(tr.liveImgData.data);
     if (out && out !== tr.liveImgData.data) tr.liveImgData.data.set(out);
     tr.liveCtx.putImageData(tr.liveImgData, 0, 0);
+    renderLiveChannels(tr);   // keep the channel grid in sync when visible
 }
 
 function runLiveLoop(tr) {
@@ -930,6 +939,12 @@ async function activateOrCollapseLive(tr) {
         tr.liveStepAccum = 0;
         drawLive(tr);
         tr.liveStatusObj.innerText = 'live trained physics — click/drag to damage';
+        if (tr.liveCA.hasScaffold && tr.livestencilBtn) {
+            tr.livestencilBtn.style.display = '';
+            tr.livestencilBtn.innerText = 'Stencil: on';
+            tr.liveStatusObj.innerText =
+                'scaffold-conditioned: a prepattern (blue) is clamped every step — try Stencil: OFF';
+        }
         runLiveLoop(tr);
     } catch (e) {
         console.error('live physics load failed', e);
@@ -955,13 +970,83 @@ window.liveResetNoise = function (id) {
 window.liveSeed = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
+    if (tr.liveCA.hasScaffold) {
+        tr.liveCA.setScaffold(true);   // Seed restores the trained setup
+        if (tr.livestencilBtn) tr.livestencilBtn.innerText = 'Stencil: on';
+    }
     tr.liveCA.resetTrained();
+    drawLive(tr);
+};
+
+window.liveChannels = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.livechanGrid) return;
+    const vis = tr.livechanGrid.style.display === 'none';
+    tr.livechanGrid.style.display = vis ? 'flex' : 'none';
+    if (vis) renderLiveChannels(tr);
+};
+
+function renderLiveChannels(tr) {
+    if (!tr.liveCA || !tr.livechanGrid ||
+        tr.livechanGrid.style.display === 'none') return;
+    const ca = tr.liveCA, S = ca.width;
+    if (!tr.chanCanvases || tr.chanCanvases.length !== ca.C) {
+        tr.livechanGrid.innerHTML = '';
+        tr.chanCanvases = [];
+        for (let c = 0; c < ca.C; c++) {
+            const wrap = document.createElement('div');
+            wrap.style.textAlign = 'center';
+            const cv = document.createElement('canvas');
+            cv.width = S; cv.height = S;
+            cv.style.width = '72px'; cv.style.height = '72px';
+            cv.style.imageRendering = 'pixelated';
+            cv.style.border = '1px solid #4443';
+            const lab = document.createElement('div');
+            lab.innerText = c === ca.C - 1 && ca.hasScaffold ? `ch ${c} (stencil)` : `ch ${c}`;
+            lab.style.fontSize = '0.65rem';
+            lab.style.opacity = '0.7';
+            wrap.appendChild(cv); wrap.appendChild(lab);
+            tr.livechanGrid.appendChild(wrap);
+            tr.chanCanvases.push(cv);
+        }
+    }
+    for (let c = 0; c < ca.C; c++) {
+        const cv = tr.chanCanvases[c], cctx = cv.getContext('2d');
+        const img = cctx.createImageData(S, S);
+        const ch = ca.readChannel(c);
+        for (let i = 0; i < ch.length; i++) {
+            const v = Math.max(0, Math.min(1, ch[i]));
+            const g = (1 - v) * 255;
+            img.data[i * 4] = g; img.data[i * 4 + 1] = g;
+            img.data[i * 4 + 2] = g; img.data[i * 4 + 3] = 255;
+        }
+        cctx.putImageData(img, 0, 0);
+    }
+}
+
+window.liveStencil = function (id) {
+    const tr = cardTrackers.find(t => t.id === id);
+    if (!tr || !tr.liveCA || !tr.liveCA.hasScaffold) return;
+    const on = !tr.liveCA.scaffoldOn;
+    tr.liveCA.setScaffold(on);
+    if (tr.livestencilBtn) tr.livestencilBtn.innerText = on ? 'Stencil: on' : 'Stencil: OFF';
+    if (tr.liveStatusObj) tr.liveStatusObj.innerText = on
+        ? 'prepattern clamped every step (blue) — the physics inks this stencil'
+        : 'stencil removed — watch whether the pattern survives without it';
     drawLive(tr);
 };
 
 window.liveClear = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
+    // Clear means CLEAR: every channel including the clamped stencil.
+    // Re-enable it with the Stencil button or Seed.
+    if (tr.liveCA.hasScaffold) {
+        tr.liveCA.setScaffold(false);
+        if (tr.livestencilBtn) tr.livestencilBtn.innerText = 'Stencil: OFF';
+        if (tr.liveStatusObj) tr.liveStatusObj.innerText =
+            'fully cleared (stencil off) — Seed or Stencil: on to restore';
+    }
     tr.liveCA.reset(false);
     drawLive(tr);
 };
