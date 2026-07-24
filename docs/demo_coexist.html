@@ -15,8 +15,8 @@
     overflow-x: auto;
   }
   #demo-canvas {
-    width: 480px;
-    height: 480px;
+    width: 640px;
+    height: 640px;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     display: block;
@@ -189,7 +189,7 @@
     </div>
 
     <div class="demo-canvas-wrap">
-      <canvas id="demo-canvas" width="192" height="192" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
+      <canvas id="demo-canvas" width="256" height="256" aria-label="Shared NCA grid; click or drag to paint the rule field B or apply damage"></canvas>
     </div>
     <p class="demo-legend">
       B=0 &rarr; organism A&rsquo;s rule (blue tint) &middot; B=1 &rarr; organism B&rsquo;s rule (red tint)
@@ -205,6 +205,7 @@
       <span class="ctl-group">
         <button id="btn-play">Pause</button>
         <button id="btn-seeds">Plant seeds</button>
+        <button id="btn-noise">Fill noise</button>
       </span>
       <span class="preset-group">
         <button id="btn-b-gradient">A&rarr;B gradient</button>
@@ -295,6 +296,6 @@
   </div>
 </footer>
 
-<script type="module" src="demo_coexist.js"></script>
+<script type="module" src="demo_coexist.js?v=arena256"></script>
 </body>
 </html>

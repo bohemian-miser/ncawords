@@ -139,6 +139,10 @@ export class BlendedCA {
 
   clear() { this._buf.fill(0); }
 
+  fillNoise() {
+    for (let i = 0; i < this._buf.length; i++) this._buf[i] = Math.random() * 0.6;
+  }
+
   // Seed: alpha + hidden channels (3..C-1) = 1 at (x, y), as nca.js does.
   seed(x, y) {
     const plane = this._plane, i = y * this._W + x;
@@ -401,7 +405,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
   // Simulation grid side. 3x the original 64x64 (9x the cells) at the same
   // 480px display size — finer pixels, same footprint. BlendedCA is fully
   // convolutional so this is independent of the weights' native grid.
-  const SIM_SIZE = 192;
+  const SIM_SIZE = 256;   // big arena: an organism is ~44 cells => ~1/6 of the width
 
   const canvas = document.getElementById("demo-canvas");
   const ctx = canvas.getContext("2d");
@@ -693,6 +697,10 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
     playBtn.textContent = playing ? "Pause" : "Play";
   });
   seedsBtn.addEventListener("click", plantSeeds);
+  const noiseBtn = document.getElementById("btn-noise");
+  if (noiseBtn) noiseBtn.addEventListener("click", () => {
+    if (ca) { ca.fillNoise(); stepCount = 0; }
+  });
   bGradientBtn.addEventListener("click", bGradientRamp);
   bHalvesBtn.addEventListener("click", bHalves);
   bZeroBtn.addEventListener("click", () => { if (ca) ca.B.fill(0); });
