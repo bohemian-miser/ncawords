@@ -211,6 +211,11 @@
 
 **Details:** Trained-init variant most reliable in training but init boards were not persisted (fixed; init.pth now saved) and cannot transfer. Scaffold-alone runs can degrade late in training (one went COMP -> BE7H). Sphere variant: 0/8 on words — clean negative for the 3D slab. Classic NCA batch reads COPMP/COMIP (0.89); fan-scaffold NCA runs read COFEP/COPP (0.67-0.75) — OCR exposed loss flattery.
 
+**NOTE:** [SEE comp-campaign-RETRACTION: the zero-shot claim did not survive adversarial interrogation.]
+
+#### comp-campaign-RETRACTION (ANALYSIS, 2026-07-24)
+Adversarial interrogation of cw-sharedk-s96-r1 RETRACTS the zero-shot-development headline. The clamped scaffold (strength 0.5) is a faint copy of the answer restored every step; the physics is a pointwise stencil-amplifier: a 1-parameter sigmoid fit BEAT the trained physics (0.00268 vs 0.00485 letter-weighted MSE); zero hole-completion (scaffold holes reproduced pixel-perfectly, hole-region output 0.000 where target is 1.0); inks arbitrary prepatterns (circle/blobs/checkerboard IoU 1.000); receptive field sub-kernel (radius 0-13px < support 15); dissolves without the per-step clamp (loss 0.208 vs 0.005). Zero-shot word transfer is trivially explained: a local amplifier is word-agnostic by construction. 'Regrows from a cleared screen' = the clamp restores the stencil. Faintness sweep (p2-faint*) cancelled as invalid (noiseless clamp admits an ideal amplifier at any strength). Phase 3 launched with anti-amplifier training: rollout-persistent scaffold holes (nonlocal completion scored as hole_mse), per-step scaffold noise (temporal integration), t0-only clamping (memory). Also: sharedk's K arg is inert (1 kernel by design) — cw-sharedk-k2/k5 were accidental duplicates.
+
 #### grok-marathons (ANALYSIS, 2026-07-24)
 Five 40k-step grokking-recipe runs (AdamW + wd + constant LR): NO late phase transitions. an-square/mk-tri flat; mk-square slow grind 0.58->0.45 (still unsolved); grok-word2 DEGRADED second half (0.08->0.22, weight decay eroded the solution). Preconditions absent: pattern losses have no memorise/generalise split. Closed as negative; no further grok spend.
 
