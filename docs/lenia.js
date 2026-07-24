@@ -27,7 +27,11 @@ const container = document.getElementById('cards-container');
 const BUCKET = 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
 const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
-const RUN_PREFIX = 'lenia-';
+// The original trainable-Lenia campaign wrote run dirs as 'lenia-*'; later
+// campaigns ('coupling-weight' sweeps and a planned follow-up) write
+// 'cw-*' and 'p2-*' instead. List all three prefixes so the gallery
+// doesn't silently miss newer runs.
+const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-'];
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function pad5(n) { return String(n).padStart(5, '0'); }
@@ -43,15 +47,18 @@ function mergeSteps(dst, src) {
 
 async function listLeniaRuns(onPage) {
     // Two-stage listing so we never page the whole bucket:
-    //   1. delimiter listing under prefix 'lenia-' -> just the run directory
-    //      names (one small request);
+    //   1. one delimiter listing per prefix in RUN_PREFIXES -> just the run
+    //      directory names (one small request each, merged into one list);
     //   2. one per-run listing for its files, streamed as each arrives.
     const runs = {};
-    const dirRes = await fetch(
-        `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
-        `?prefix=${RUN_PREFIX}&delimiter=/&fields=prefixes&maxResults=1000`);
-    if (!dirRes.ok) throw new Error(`bucket dir list failed: ${dirRes.status}`);
-    const dirs = ((await dirRes.json()).prefixes || []).map(p => p.slice(0, -1));
+    const dirLists = await Promise.all(RUN_PREFIXES.map(async prefix => {
+        const dirRes = await fetch(
+            `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
+            `?prefix=${prefix}&delimiter=/&fields=prefixes&maxResults=1000`);
+        if (!dirRes.ok) throw new Error(`bucket dir list failed (${prefix}): ${dirRes.status}`);
+        return ((await dirRes.json()).prefixes || []).map(p => p.slice(0, -1));
+    }));
+    const dirs = [...new Set(dirLists.flat())];
 
     await Promise.all(dirs.map(async run => {
         const res = await fetch(
@@ -114,6 +121,12 @@ function buildSubtitle(args) {
     if (args.C !== undefined) parts.push(`${args.C}ch`);
     if (args.K !== undefined) parts.push(`${args.K} kernel${args.K === 1 ? '' : 's'}`);
     if (args.params !== undefined) parts.push(`${args.params} params`);
+    // cw-*/p2-* campaign runs carry extra args the original lenia-* runs
+    // didn't; surface whichever of these are present.
+    if (args.cond !== undefined) parts.push(`cond:${args.cond}`);
+    if (args.scaf_strength !== undefined) parts.push(`scaf ${args.scaf_strength}`);
+    if (args.size !== undefined) parts.push(`${args.size}px`);
+    if (args.train_init !== undefined) parts.push(args.train_init ? 'train_init' : 'no train_init');
     return parts.join(' · ');
 }
 

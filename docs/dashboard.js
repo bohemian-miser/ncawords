@@ -13,6 +13,8 @@ const BUCKET = 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
 const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
 
+function pad5(n) { return String(n).padStart(5, '0'); }
+
 async function listCloudRuns(onPage) {
     const runs = {};
     let pageToken = null;
@@ -24,13 +26,19 @@ async function listCloudRuns(onPage) {
             const i = name.indexOf('/');
             if (i < 0) return;
             const run = name.slice(0, i), fname = name.slice(i + 1);
-            if (!runs[run]) runs[run] = {maxStep: -1, hasWeights: false, updated: ''};
+            if (!runs[run]) runs[run] = {maxStep: -1, hasWeights: false, updated: '', kernelStep: -1};
             if (fname.startsWith('COMP_')) {
                 const s = parseInt(fname.slice(5, 10));
                 if (!isNaN(s)) runs[run].maxStep = Math.max(runs[run].maxStep, s);
                 if (updated && updated > runs[run].updated) runs[run].updated = updated;
             } else if (fname === 'weights.json') {
                 runs[run].hasWeights = true;
+            } else if (fname.startsWith('KERNEL_')) {
+                // Cheap lenia-family detection: KERNEL_#####.png files only
+                // exist for nca.train_lenia runs, and we're already paging
+                // the whole bucket listing here — no extra fetch needed.
+                const s = parseInt(fname.slice(7, 12));
+                if (!isNaN(s)) runs[run].kernelStep = Math.max(runs[run].kernelStep, s);
             }
         });
         if (onPage) onPage(runs);   // stream cards page by page
@@ -48,7 +56,9 @@ function cloudMethodsFrom(runs) {
             desc: 'Vertex AI training run (live from the public bucket)',
             seedType: 'cloud',
             cloud: true,
-            updated: runs[run].updated
+            updated: runs[run].updated,
+            isLenia: runs[run].kernelStep >= 0,
+            kernelStep: runs[run].kernelStep
         };
         if (runs[run].hasWeights) m.weights_url = BUCKET_BASE + run + '/weights.json';
         return m;
@@ -101,6 +111,15 @@ function addOrUpdateCards(list) {
         card.className = 'card';
         card.id = `card_${m.id}`;
         card.onclick = () => openModal(m.title, m.dir, m.desc);
+        const leniaBlock = m.isLenia ? `
+            <div class="sub-desc" style="margin-top:10px;">learned kernels</div>
+            <div class="img-container" style="height:90px;">
+                <img loading="lazy" id="kernel_${m.id}" src="${m.dir}KERNEL_${pad5(m.kernelStep)}.png" onerror="this.style.display='none'">
+            </div>
+            <div style="margin-top:6px;">
+                <a href="lenia.html" onclick="event.stopPropagation();" style="color:#4db8ff; font-size:0.85em; text-decoration:none;">open in Lenia lab &rarr;</a>
+            </div>
+        ` : '';
         card.innerHTML = `
             <h3>${m.title}</h3>
             <div class="side-by-side">
@@ -113,6 +132,7 @@ function addOrUpdateCards(list) {
                     <div class="img-container"><img loading="lazy" id="live_${m.id}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="></div>
                 </div>
             </div>
+            ${leniaBlock}
             <div class="status" id="live_status_${m.id}">Loading...</div>
         `;
         container.appendChild(card);

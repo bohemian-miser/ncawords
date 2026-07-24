@@ -128,6 +128,20 @@
     is pure negotiation between two rule-sets that each think they own the
     world.
   </p>
+  <p>
+    The default organisms here (<code>tough-*</code>, and the <code>firm-*</code>
+    alternatives in the dropdowns) are hardened for exactly this kind of
+    boundary fight: training hits them with heavier, more frequent damage
+    than the original <code>vanilla-*</code> runs, then makes them survive
+    long no-grad &ldquo;fester&rdquo; rollouts &mdash; many extra steps with
+    no gradient update &mdash; before grading resumes, so the learned rule
+    has to hold its shape over a much longer horizon. That should make the
+    shared-grid negotiation more stable at painted boundaries than the
+    original vanilla weights. The hardened runs are still training as this
+    is written; if a <code>tough-*</code> selection 404s, the demo
+    automatically falls back to that organism&rsquo;s <code>vanilla-*</code>
+    weights and says so below the canvas.
+  </p>
 </div>
 
 <div class="figure-column">
@@ -185,6 +199,7 @@
       push&rdquo; is above 0, it also physically pushes matter downhill along its slope.
     </p>
     <p id="demo-status">loading trained organisms&hellip;<button id="btn-retry" hidden>Retry</button></p>
+    <p id="demo-fallback-note" class="demo-legend" style="display:none;"></p>
 
     <div class="demo-controls">
       <span class="ctl-group">
@@ -210,7 +225,16 @@
       <span class="ctl-group">
         <label for="model-a">organism A (B=0)</label>
         <select id="model-a">
-          <option value="vanilla-lizard" selected>vanilla-lizard</option>
+          <option value="tough-lizard" selected>tough-lizard</option>
+          <option value="tough-web">tough-web</option>
+          <option value="tough-smiley">tough-smiley</option>
+          <option value="tough-butterfly">tough-butterfly</option>
+          <option value="tough-mushroom">tough-mushroom</option>
+          <option value="tough-rocket">tough-rocket</option>
+          <option value="firm-lizard">firm-lizard</option>
+          <option value="firm-web">firm-web</option>
+          <option value="firm-smiley">firm-smiley</option>
+          <option value="vanilla-lizard">vanilla-lizard</option>
           <option value="vanilla-web">vanilla-web</option>
           <option value="vanilla-smiley">vanilla-smiley</option>
           <option value="vanilla-butterfly">vanilla-butterfly</option>
@@ -221,8 +245,17 @@
       <span class="ctl-group">
         <label for="model-b">organism B (B=1)</label>
         <select id="model-b">
+          <option value="tough-lizard">tough-lizard</option>
+          <option value="tough-web" selected>tough-web</option>
+          <option value="tough-smiley">tough-smiley</option>
+          <option value="tough-butterfly">tough-butterfly</option>
+          <option value="tough-mushroom">tough-mushroom</option>
+          <option value="tough-rocket">tough-rocket</option>
+          <option value="firm-lizard">firm-lizard</option>
+          <option value="firm-web">firm-web</option>
+          <option value="firm-smiley">firm-smiley</option>
           <option value="vanilla-lizard">vanilla-lizard</option>
-          <option value="vanilla-web" selected>vanilla-web</option>
+          <option value="vanilla-web">vanilla-web</option>
           <option value="vanilla-smiley">vanilla-smiley</option>
           <option value="vanilla-butterfly">vanilla-butterfly</option>
           <option value="vanilla-mushroom">vanilla-mushroom</option>
@@ -252,7 +285,9 @@
       Organism weights are read live from a public training bucket, the same
       source the <a href="dashboard.html">experiment gallery</a> uses. If a
       model is still training its weights may not exist yet &mdash; retry in
-      a little while.
+      a little while. <code>tough-*</code> selections that aren&rsquo;t
+      exported yet fall back automatically to that organism&rsquo;s
+      <code>vanilla-*</code> weights in the meantime.
     </p>
     <a href="index.html">&larr; Article</a> &middot;
     <a href="research.html">Research log &rarr;</a>

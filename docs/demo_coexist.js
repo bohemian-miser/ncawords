@@ -390,6 +390,7 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
   const ctx = canvas.getContext("2d");
   const statusEl = document.getElementById("demo-status");
   const retryBtn = document.getElementById("btn-retry");
+  const fallbackNoteEl = document.getElementById("demo-fallback-note");
   const stepCounterEl = document.getElementById("step-counter");
   const playBtn = document.getElementById("btn-play");
   const seedsBtn = document.getElementById("btn-seeds");
@@ -430,6 +431,21 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
     statusEl.insertBefore(document.createTextNode(""), retryBtn);
   }
 
+  // Small note shown when one or both selected organisms fell back from
+  // tough-* to vanilla-* weights because the hardened run isn't exported
+  // yet (see fetchWeightsWithFallback below).
+  function setFallbackNote(notes) {
+    if (!fallbackNoteEl) return;
+    if (!notes || !notes.length) {
+      fallbackNoteEl.style.display = "none";
+      fallbackNoteEl.textContent = "";
+      return;
+    }
+    fallbackNoteEl.textContent =
+      `using vanilla weights (hardened still training): ${notes.join(", ")}`;
+    fallbackNoteEl.style.display = "";
+  }
+
   function bHalves() {
     if (!ca) return;
     const W = ca.width, H = ca.height, B = ca.B;
@@ -452,22 +468,52 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
     if (res.status === 404 || res.status === 403) {
       const err = new Error(`${run} has no weights yet`);
       err.training = true;
+      err.run = run;
       throw err;
     }
     if (!res.ok) throw new Error(`${run}: HTTP ${res.status}`);
     return res.json();
   }
 
+  // tough-* organisms are QUEUED/still training right now (weights.json
+  // 404s). Rather than just showing "still training" for the whole demo,
+  // fall back to that same organism's vanilla-* weights so the page stays
+  // usable, and report the substitution via setFallbackNote(). If the
+  // vanilla fallback also fails, surface the ORIGINAL tough-* 404 so the
+  // existing "still training — Retry" handling still applies unchanged.
+  async function fetchWeightsWithFallback(run) {
+    try {
+      const weights = await fetchWeights(run);
+      return { weights, run, usedFallback: false };
+    } catch (err) {
+      if (err.training && run.startsWith("tough-")) {
+        const fallbackRun = "vanilla-" + run.slice("tough-".length);
+        try {
+          const weights = await fetchWeights(fallbackRun);
+          return { weights, run: fallbackRun, usedFallback: true, originalRun: run };
+        } catch (fallbackErr) {
+          // Fallback unavailable too — report the original error so Retry
+          // behaves exactly as it did before this fallback existed.
+        }
+      }
+      throw err;
+    }
+  }
+
   async function loadModels() {
     const token = ++loadToken;
     const runA = modelASelect.value, runB = modelBSelect.value;
     setStatus(`loading ${runA} + ${runB}…`);
+    setFallbackNote([]);
     if (ca) savedB = ca.B;
     ca = null;
     try {
-      const [wA, wB] = await Promise.all([fetchWeights(runA), fetchWeights(runB)]);
+      const [resA, resB] = await Promise.all([
+        fetchWeightsWithFallback(runA),
+        fetchWeightsWithFallback(runB),
+      ]);
       if (token !== loadToken) return; // superseded by a newer selection
-      const next = new BlendedCA(wA, wB);
+      const next = new BlendedCA(resA.weights, resB.weights);
       canvas.width = next.width;
       canvas.height = next.height;
       imgData = ctx.createImageData(next.width, next.height);
@@ -481,8 +527,14 @@ if (typeof document !== "undefined" && document.getElementById("demo-canvas")) {
       savedB = null;
       plantSeeds();
       setStatus(`${runA} (A) + ${runB} (B) loaded — running`);
+      setFallbackNote(
+        [resA, resB]
+          .filter((r) => r.usedFallback)
+          .map((r) => `${r.originalRun} → ${r.run}`)
+      );
     } catch (err) {
       if (token !== loadToken) return;
+      setFallbackNote([]);
       if (err.training) {
         setStatus(`${err.message} — still training, try again shortly.`, true);
       } else {
