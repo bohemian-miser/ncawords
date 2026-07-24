@@ -91,6 +91,9 @@ def train(emoji="1f642", label=None, steps=8000, channel_n=16, hidden_n=96,
         if fester_p > 0 and torch.rand(1).item() < fester_p:
             x = fester(model, x,
                        damage_fn=lambda z: z * damage_mask_rect(z.shape[0], h, w, device))
+        # most-damaged/festered input state, snapshotted as START_ so the
+        # damage->recovery training is visible, not just its endpoint
+        x_start = x[-1:].detach().clone()
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
@@ -112,11 +115,12 @@ def train(emoji="1f642", label=None, steps=8000, channel_n=16, hidden_n=96,
                   f"({time.time() - t0:.1f}s)", flush=True)
             if snap_dir:
                 s = f"{step:05d}"
-                img = to_rgba(x)[0].detach().cpu().clamp(0, 1)
-                vis = (1 - img[3:4] + img[:3]).clamp(0, 1).permute(1, 2, 0).numpy()
-                Image.fromarray((vis * 255).astype(np.uint8)) \
-                    .resize((w * 6, h * 6), Image.NEAREST) \
-                    .save(Path(snap_dir) / f"COMP_{s}.png")
+                for tag, t in [("COMP", to_rgba(x)[-1]), ("START", to_rgba(x_start)[0])]:
+                    img = t.detach().cpu().clamp(0, 1)
+                    vis = (1 - img[3:4] + img[:3]).clamp(0, 1).permute(1, 2, 0).numpy()
+                    Image.fromarray((vis * 255).astype(np.uint8)) \
+                        .resize((w * 6, h * 6), Image.NEAREST) \
+                        .save(Path(snap_dir) / f"{tag}_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
                 meta.log(step, loss.item())
                 export_run_weights(model, snap_dir, label.upper(), 12,
