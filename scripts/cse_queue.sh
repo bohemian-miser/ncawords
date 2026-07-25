@@ -22,9 +22,9 @@ while IFS= read -r line; do
   MODULE=$(echo "$line" | awk '{print $2}')
   ARGS=$(echo "$line" | cut -d' ' -f3-)
   echo "[queue] ==== $NAME ===="
-  ssh -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
+  ssh -n -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
   for attempt in $(seq 1 200); do
-    ssh -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
+    ssh -n -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
       "cd ~ && nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
       && break
     echo "[queue] $NAME dropped (attempt $attempt); resuming in 60s"
@@ -32,6 +32,6 @@ while IFS= read -r line; do
   done
   echo "[queue] $NAME done; collecting + cleaning"
   .venv/bin/python scripts/cse_collect.py || true
-  ssh -o BatchMode=yes "$HOST" "rm -rf nca-runs/$NAME"
+  ssh -n -o BatchMode=yes "$HOST" "rm -rf nca-runs/$NAME"
 done < "$QUEUE"
 echo "[queue] lane complete: $QUEUE"
