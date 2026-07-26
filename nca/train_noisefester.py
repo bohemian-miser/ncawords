@@ -25,7 +25,7 @@ import torch.nn.functional as F
 from PIL import Image
 
 from nca.model import NCA, to_rgba
-from nca.train_staged import render_word_3_line_fan, make_seed
+from nca.train_staged import render_word_3_line, render_word_3_line_fan, make_seed
 from nca.train_web_hidden import damage_mask_rect
 from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
@@ -46,14 +46,16 @@ def build_phases(warm=1000, phase_len=250):
     return phases
 
 
-def train(source="cls-fan3-r1", text="COMP", channel_n=16, hidden_n=128,
+def train(source="cls-fan3-r1", text="COMP", scaffold="fan3",
+          channel_n=16, hidden_n=128,
           batch=16, pool_size=256, lr=1e-3, ca_min=64, ca_max=96,
           damage_p=0.4, phase_len=250, rng_seed=0,
           log_every=100, ckpt_every=500, snap_dir=None):
     torch.manual_seed(900 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    tgt = render_word_3_line_fan(text, 12)
+    tgt = (render_word_3_line(text, 12) if scaffold == "3line"
+           else render_word_3_line_fan(text, 12))
     _, h, w = tgt.shape
     target = torch.from_numpy(tgt)[None].repeat(batch, 1, 1, 1).to(device)
 
@@ -165,9 +167,13 @@ if __name__ == "__main__":
     p.add_argument("--source", default="cls-fan3-r1")
     p.add_argument("--text", default="COMP")
     p.add_argument("--phase-len", type=int, default=250)
+    p.add_argument("--scaffold", default="fan3", choices=["fan3", "3line"])
+    p.add_argument("--channel-n", type=int, default=16)
+    p.add_argument("--hidden-n", type=int, default=128)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
-    train(source=a.source, text=a.text, phase_len=a.phase_len,
+    train(source=a.source, text=a.text, scaffold=a.scaffold,
+          channel_n=a.channel_n, hidden_n=a.hidden_n, phase_len=a.phase_len,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
