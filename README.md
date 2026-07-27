@@ -6,6 +6,8 @@ whole words**: tiny neural CAs trained so a single seed pixel grows into a
 character — verified by Tesseract OCR — plus an interactive distill-style
 article that runs the trained models live in the browser.
 
+**[▶ Read the article / run the models](https://bohemian-miser.github.io/ncawords/)**
+
 Reference implementation: [google-research/self-organising-systems](https://github.com/google-research/self-organising-systems)
 (Apache 2.0). This repo is an independent PyTorch/JS port trained from scratch
 on a Raspberry Pi 5 (CPU only).
