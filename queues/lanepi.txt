@@ -1,1 +1,1 @@
-ns-sharedk16-r1 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=16 --rng-seed=1
+nf2-fan3 nca.train_noisefester --mix --phase-len=250 --log-every=500 --source=cls-fan3-r1 --scaffold=fan3 --channel-n=16 --hidden-n=128

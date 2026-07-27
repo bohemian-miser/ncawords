@@ -1,4 +1,2 @@
-nf-og24 nca.train_noisefester --source=og24-3line-r0 --scaffold=3line --channel-n=24 --hidden-n=128 --phase-len=250 --log-every=500
+nf2-og24 nca.train_noisefester --mix --phase-len=250 --log-every=500 --source=og24-3line-r0 --scaffold=3line --channel-n=24 --hidden-n=128
 ns-full-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=full --channels=6 --rng-seed=0
-ns-sharedk12-r1 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=12 --rng-seed=1
-ns-full12-init-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=full --channels=12 --train-init --rng-seed=0
