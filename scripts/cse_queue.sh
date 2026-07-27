@@ -10,10 +10,9 @@ QUEUE=$1
 HOST="${2:-cse}"
 cd "$(dirname "$0")/.."
 
-.venv/bin/python setup.py -q sdist --formats=gztar >/dev/null 2>&1
-scp -q dist/nca-0.1.tar.gz "$HOST":nca-latest.tar.gz
-ssh -o BatchMode=yes "$HOST" \
-  "./nca-venv/bin/pip install -q --no-cache-dir --force-reinstall --no-deps ~/nca-latest.tar.gz"
+# Ship the source tree and run via PYTHONPATH — pip installs into the
+# shared NFS venv race between lanes and silently keep stale files.
+rsync -az --delete nca/ "$HOST":nca-src/nca/
 
 mapfile -t QLINES < "$QUEUE"
 for line in "${QLINES[@]}"; do
@@ -26,7 +25,7 @@ for line in "${QLINES[@]}"; do
   ssh -n -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
   for attempt in $(seq 1 200); do
     ssh -n -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
-      "cd ~ && nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
+      "cd ~ && PYTHONPATH=\$HOME/nca-src nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
       && break
     echo "[queue] $NAME dropped (attempt $attempt); resuming in 60s"
     sleep 60
