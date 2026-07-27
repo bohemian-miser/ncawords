@@ -12,6 +12,7 @@ cd "$(dirname "$0")/.."
 
 # Ship the source tree and run via PYTHONPATH — pip installs into the
 # shared NFS venv race between lanes and silently keep stale files.
+ssh -n -o BatchMode=yes "$HOST" "mkdir -p ~/nca-src/nca"
 rsync -az --delete nca/ "$HOST":nca-src/nca/
 
 mapfile -t QLINES < "$QUEUE"
