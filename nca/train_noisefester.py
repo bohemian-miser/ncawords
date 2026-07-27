@@ -37,6 +37,58 @@ LEVELS = [0.0005, 0.01, 0.02, 0.05, 0.10,
 FESTERS = [10, 50, 100, 200, 500]
 
 
+
+def mixed_corrupt(x, model, target_shape, step, steps, device, rng_state=None):
+    """Per-sample mixed corruption with a ramping severity ceiling.
+
+    Every sample in the batch gets its own noise level, damage count and
+    fester duration, so one batch spans clean-ish to obliterated. The
+    ceiling rises with training: early batches are mostly light, late
+    batches routinely include pure-noise and long-fester samples.
+    Returns (x, info) where info summarises the mix for logging.
+    """
+    B, C, h, w = x.shape
+    frac = min(1.0, step / max(1, steps * 0.75))
+    ceil_noise = 0.05 + 0.95 * frac          # 5% -> 100%
+    max_dmg = 1 + int(6 * frac)              # 1 -> 7 boxes
+    max_fest = int(20 + 580 * frac)          # 20 -> 600 steps
+
+    # per-sample noise, biased low but reaching the ceiling
+    a = (torch.rand(B, 1, 1, 1, device=device) ** 1.5) * ceil_noise
+    # 12% of samples: start from PURE noise regardless of ceiling
+    pure = (torch.rand(B, 1, 1, 1, device=device) < 0.12).float()
+    a = torch.maximum(a, pure)
+    x = (1 - a) * x + a * torch.rand_like(x)
+
+    # per-sample multi-box damage of random sizes
+    for b in range(B):
+        if torch.rand(1).item() < 0.6:
+            for _ in range(int(torch.randint(1, max_dmg + 1, (1,)))):
+                bh = int(torch.randint(3, max(4, h // 2), (1,)))
+                bw = int(torch.randint(3, max(4, w // 2), (1,)))
+                y0 = int(torch.randint(0, max(1, h - bh), (1,)))
+                x0 = int(torch.randint(0, max(1, w - bw), (1,)))
+                x[b, :, y0:y0 + bh, x0:x0 + bw] = 0.0
+
+    # random-duration fester on a random subset, with damage during it
+    fest_n = 0
+    if torch.rand(1).item() < 0.55:
+        fest_n = int(torch.exp(torch.rand(1) * np.log(max_fest / 10.0)).item() * 10)
+        k = int(torch.randint(1, B + 1, (1,)))
+        idx = torch.randperm(B, device=device)[:k]
+        sub = x[idx]
+        with torch.no_grad():
+            for t in range(fest_n):
+                sub = model.step(sub) if hasattr(model, "step") else model(sub, steps=1)
+                if t and t % 120 == 0 and torch.rand(1).item() < 0.5:
+                    sub = sub * damage_mask_rect(sub.shape[0], h, w, device)
+        x = x.clone()
+        x[idx] = sub.detach()
+    return x, {"ceil": round(float(ceil_noise), 3),
+               "mean_noise": round(float(a.mean()), 3),
+               "fest": fest_n, "max_dmg": max_dmg}
+
+
 def build_phases(warm=1000, phase_len=250):
     phases = [("warm", 0.0, 0, warm)]
     for a in LEVELS:
@@ -46,7 +98,7 @@ def build_phases(warm=1000, phase_len=250):
     return phases
 
 
-def train(source="cls-fan3-r1", text="COMP", scaffold="fan3",
+def train(source="cls-fan3-r1", text="COMP", scaffold="fan3", mix=False,
           channel_n=16, hidden_n=128,
           batch=16, pool_size=256, lr=1e-3, ca_min=64, ca_max=96,
           damage_p=0.4, phase_len=250, rng_seed=0,
@@ -68,7 +120,7 @@ def train(source="cls-fan3-r1", text="COMP", scaffold="fan3",
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     phases = build_phases(phase_len=phase_len)
-    steps = sum(p[3] for p in phases)
+    steps = 20000 if mix else sum(p[3] for p in phases)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [int(steps * 0.9)], 0.1)
 
     seed = make_seed(tgt, channel_n).to(device)
@@ -115,13 +167,17 @@ def train(source="cls-fan3-r1", text="COMP", scaffold="fan3",
         if torch.rand(1).item() < damage_p:
             m = damage_mask_rect(2, h, w, device)
             x[-2:] = x[-2:] * m
-        if noise_a > 0:
-            x = (1 - noise_a) * x + noise_a * torch.rand_like(x)
-        if fest_n > 0:
-            x = fester(model, x,
-                       damage_fn=lambda z: z * damage_mask_rect(
-                           z.shape[0], h, w, device),
-                       min_steps=fest_n, max_steps=fest_n)
+        if mix:
+            x, mixinfo = mixed_corrupt(x, model, target.shape, step, steps, device)
+            name = f"mix(c{mixinfo['ceil']},f{mixinfo['fest']})"
+        else:
+            if noise_a > 0:
+                x = (1 - noise_a) * x + noise_a * torch.rand_like(x)
+            if fest_n > 0:
+                x = fester(model, x,
+                           damage_fn=lambda z: z * damage_mask_rect(
+                               z.shape[0], h, w, device),
+                           min_steps=fest_n, max_steps=fest_n)
         x_start = x[-1:].detach().clone()
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
@@ -168,12 +224,14 @@ if __name__ == "__main__":
     p.add_argument("--text", default="COMP")
     p.add_argument("--phase-len", type=int, default=250)
     p.add_argument("--scaffold", default="fan3", choices=["fan3", "3line"])
+    p.add_argument("--mix", action="store_true",
+                   help="mixed per-sample severity with ramping ceiling")
     p.add_argument("--channel-n", type=int, default=16)
     p.add_argument("--hidden-n", type=int, default=128)
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=100)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
-    train(source=a.source, text=a.text, scaffold=a.scaffold,
+    train(source=a.source, text=a.text, scaffold=a.scaffold, mix=a.mix,
           channel_n=a.channel_n, hidden_n=a.hidden_n, phase_len=a.phase_len,
           rng_seed=a.rng_seed, log_every=a.log_every, snap_dir=a.snap_dir)
