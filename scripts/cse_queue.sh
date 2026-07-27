@@ -15,7 +15,8 @@ scp -q dist/nca-0.1.tar.gz "$HOST":nca-latest.tar.gz
 ssh -o BatchMode=yes "$HOST" \
   "./nca-venv/bin/pip install -q --no-cache-dir --force-reinstall --no-deps ~/nca-latest.tar.gz"
 
-while IFS= read -r line; do
+mapfile -t QLINES < "$QUEUE"
+for line in "${QLINES[@]}"; do
   [ -z "$line" ] && continue
   case "$line" in \#*) continue;; esac
   NAME=$(echo "$line" | awk '{print $1}')
@@ -31,7 +32,7 @@ while IFS= read -r line; do
     sleep 60
   done
   echo "[queue] $NAME done; collecting + cleaning"
-  .venv/bin/python scripts/cse_collect.py || true
+  .venv/bin/python scripts/cse_collect.py < /dev/null || true
   ssh -n -o BatchMode=yes "$HOST" "rm -rf nca-runs/$NAME"
-done < "$QUEUE"
+done
 echo "[queue] lane complete: $QUEUE"
