@@ -52,14 +52,22 @@ def main(status_only=False):
     client = storage.Client(project=CFG["project"])
     bucket = client.bucket(CFG["bucket"])
     n = 0
+    # Only consider files touched since the last successful pass (with an
+    # hour of slack) — blob.exists() round-trips across every historical
+    # file made the pass take ~9 minutes for 0 uploads.
+    import time as _time
+    stamp = LOCAL / ".last_collect"
+    cutoff = (stamp.stat().st_mtime - 3600) if stamp.exists() else 0
     for run_dir in LOCAL.iterdir():
         if not run_dir.is_dir():
             continue
         for f in run_dir.iterdir():
             if f.name in ("job.log", "pid") or not f.is_file():
                 continue
-            blob = bucket.blob(f"{run_dir.name}/{f.name}")
             mtime = f.stat().st_mtime
+            if mtime < cutoff:
+                continue
+            blob = bucket.blob(f"{run_dir.name}/{f.name}")
             blob_fresh = False
             if blob.exists():
                 blob.reload()
@@ -67,6 +75,7 @@ def main(status_only=False):
             if not blob_fresh:
                 blob.upload_from_filename(str(f))
                 n += 1
+    stamp.touch()
     print(f"uploaded {n} files")
 
 
