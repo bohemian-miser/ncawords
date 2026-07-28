@@ -244,6 +244,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Warning: Failed to update methods.json: {e}")
         
-    print(f"Starting Interactive NCA Orchestration Server on http://localhost:8002/")
+    print(f"Starting Interactive NCA Orchestration Server on http://localhost:8791/")
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8791)
