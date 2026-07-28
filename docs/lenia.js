@@ -1,38 +1,64 @@
-// Trainable Lenia run gallery — sibling of dashboard.js, scoped to runs
-// whose directory name starts with "lenia-". Same public bucket, same
-// card/sort/search mechanics and progressive loading as dashboard.js; the
-// per-run content is different (COMP pattern snapshots, learned KERNEL
-// tile strips, optional COUPLING heatmaps, target.png, run.json).
+// Unified run gallery — ONE card format for every training run in the
+// public bucket (Lenia-family and NCA-family alike). Per-run content:
+// pre-rendered `<TAG>_#####.png` snapshot streams (COMP training frames,
+// START start-states, KERNEL tile strips, COUPLING heatmaps, plus any
+// other generically-named stream), target.png, run.json.
 //
-// The COMP training-snapshot animation, the KERNEL tile strip and the
-// COUPLING heatmap all share one timeline: scrubbing/playing the COMP
-// animation re-picks the nearest KERNEL/COUPLING frame at or before the
-// current step, so "learned kernels" visibly evolve in sync with training.
+// All of a card's snapshot streams share one timeline: scrubbing/playing
+// the primary animation re-picks the nearest secondary frame at or before
+// the current step, so e.g. "learned kernels" visibly evolve in sync with
+// training.
 //
 // Each card also offers a "Run live" widget that fetches the run's
-// exported weights.json and steps the actual trained Lenia physics in the
-// browser via lenia_engine.js (LeniaCA) — a real from-scratch simulator,
-// distinct from the pre-rendered PNG timelapse above it.
+// exported weights.json and steps the actual trained physics in the
+// browser — LeniaCA (lenia_engine.js) for `kind === 'lenia'` exports,
+// createCA (nca.js, WebGL2 with CPU fallback) for NCA-format exports — a
+// real from-scratch simulator, distinct from the PNG timelapse above it.
 
 import { LeniaCA } from './lenia_engine.js?v=nostencil';
+import { createCA } from './nca.js';
 
 let methods = [];
 let cardTrackers = [];
 const container = document.getElementById('cards-container');
 
 // Public bucket the training jobs write to; readable (and listable)
-// anonymously, so a static page needs no backend at all. Same bucket and
-// listing endpoint as dashboard.js — only the directory-name prefix filter
-// (and the file kinds we look for within each run) differ.
-const BUCKET = 'recipe-lanes-nca-jobs';
+// anonymously, so a static page needs no backend at all. Overridable via
+// an optional config.js (gitignored) that sets window.NCA_CONFIG.bucket.
+const BUCKET = (window.NCA_CONFIG && window.NCA_CONFIG.bucket) || 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
-const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
-// The original trainable-Lenia campaign wrote run dirs as 'lenia-*'; later
-// campaigns ('coupling-weight' sweeps and a planned follow-up) write
-// 'cw-*' and 'p2-*' instead. List all three prefixes so the gallery
-// doesn't silently miss newer runs.
-const RUN_PREFIXES = ['lenia-', 'cw-', 'p2-', 'p3-', 'cwt0-', 'abl-', 'cse-', 'gen-', 'ns-'];
+// Top-level bucket prefixes that are not run directories.
+const EXCLUDE_PREFIXES = ['packages/', 'analysis/', 'weights/', 'docs/'];
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
+
+// Snapshot-stream tag handling: every `<TAG>_#####.png` in a run dir is a
+// stream. One tag is the card's main animated timeline (COMP > GOL >
+// PATTERN, else first alphabetically); up to two more show beside it,
+// synced to the same timeline (START, KERNEL, COUPLING preferred, then
+// others alphabetically).
+const PRIMARY_PREF = ['COMP', 'GOL', 'PATTERN'];
+const SECONDARY_PREF = ['START', 'KERNEL', 'COUPLING'];
+const TAG_LABELS = {
+    START: 'start state',
+    KERNEL: 'learned kernels',
+    COUPLING: 'channel coupling',
+    RECOV: 'post-damage recovery',
+    TARGET: 'moving target'
+};
+
+function tagLabel(tag) { return TAG_LABELS[tag] || tag.toLowerCase(); }
+
+function pickTags(streams) {
+    const tags = Object.keys(streams).filter(t => streams[t] && streams[t].length);
+    const primary = PRIMARY_PREF.find(t => tags.includes(t))
+        || tags.slice().sort()[0] || null;
+    const rest = tags.filter(t => t !== primary);
+    const secondary = [
+        ...SECONDARY_PREF.filter(t => rest.includes(t)),
+        ...rest.filter(t => !SECONDARY_PREF.includes(t)).sort()
+    ].slice(0, 2);
+    return { primary, secondary };
+}
 
 function pad5(n) { return String(n).padStart(5, '0'); }
 
@@ -75,20 +101,26 @@ function mergeSteps(dst, src) {
 }
 
 async function listLeniaRuns(onPage) {
-    // Two-stage listing so we never page the whole bucket:
-    //   1. one delimiter listing per prefix in RUN_PREFIXES -> just the run
-    //      directory names (one small request each, merged into one list);
+    // Two-stage listing so we never page the whole bucket in one flat walk:
+    //   1. ONE delimiter listing of every top-level directory (prefix=''),
+    //      minus the known non-run prefixes;
     //   2. one per-run listing for its files, streamed as each arrives.
-    const runs = {};
-    const dirLists = await Promise.all(RUN_PREFIXES.map(async prefix => {
+    const dirs = [];
+    let pageToken = null;
+    do {
         const dirRes = await fetch(
             `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
-            `?prefix=${prefix}&delimiter=/&fields=prefixes&maxResults=1000`);
-        if (!dirRes.ok) throw new Error(`bucket dir list failed (${prefix}): ${dirRes.status}`);
-        return ((await dirRes.json()).prefixes || []).map(p => p.slice(0, -1));
-    }));
-    const dirs = [...new Set(dirLists.flat())];
+            `?prefix=&delimiter=/&fields=prefixes,nextPageToken&maxResults=1000` +
+            (pageToken ? `&pageToken=${pageToken}` : ''));
+        if (!dirRes.ok) throw new Error(`bucket dir list failed: ${dirRes.status}`);
+        const dd = await dirRes.json();
+        (dd.prefixes || []).forEach(p => {
+            if (!EXCLUDE_PREFIXES.includes(p)) dirs.push(p.slice(0, -1));
+        });
+        pageToken = dd.nextPageToken;
+    } while (pageToken);
 
+    const runs = {};
     await Promise.all(dirs.map(async run => {
         const res = await fetch(
             `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
@@ -97,26 +129,21 @@ async function listLeniaRuns(onPage) {
         if (!res.ok) return;
         const d = await res.json();
         const r = {
-            compSteps: [], kernelSteps: [], couplingSteps: [],
-            hasTarget: false, hasRunJson: false, updated: ''
+            streams: {},   // TAG -> ascending snapshot steps
+            hasTarget: false, hasRunJson: false, hasCode: false, updated: ''
         };
         (d.items || []).forEach(({name, updated}) => {
             const fname = name.slice(run.length + 1);
             if (updated && updated > r.updated) r.updated = updated;
-            const m = fname.match(/^(COMP|KERNEL|COUPLING)_(\d+)\.png$/);
+            const m = fname.match(/^([A-Z]+)_(\d+)\.png$/);
             if (m) {
                 const step = parseInt(m[2], 10);
-                if (!isNaN(step)) {
-                    if (m[1] === 'COMP') r.compSteps.push(step);
-                    else if (m[1] === 'KERNEL') r.kernelSteps.push(step);
-                    else r.couplingSteps.push(step);
-                }
+                if (!isNaN(step)) (r.streams[m[1]] || (r.streams[m[1]] = [])).push(step);
             } else if (fname === 'target.png') r.hasTarget = true;
             else if (fname === 'run.json') r.hasRunJson = true;
+            else if (fname === 'code.tgz') r.hasCode = true;
         });
-        r.compSteps.sort((a, b) => a - b);
-        r.kernelSteps.sort((a, b) => a - b);
-        r.couplingSteps.sort((a, b) => a - b);
+        Object.values(r.streams).forEach(a => a.sort((x, y) => x - y));
         runs[run] = r;
         if (onPage) onPage(runs);   // stream cards as each run's listing lands
     }));
@@ -130,11 +157,10 @@ function leniaMethodsFrom(runs) {
         dir: BUCKET_BASE + run + '/',
         desc: '',
         tags: [],
-        compSteps: runs[run].compSteps,
-        kernelSteps: runs[run].kernelSteps,
-        couplingSteps: runs[run].couplingSteps,
+        streams: runs[run].streams,
         hasTarget: runs[run].hasTarget,
         hasRunJson: runs[run].hasRunJson,
+        hasCode: runs[run].hasCode,
         updated: runs[run].updated
     }));
 }
@@ -158,17 +184,24 @@ function classifyScaffold(args) {
     return { deprecated: true };
 }
 
-function buildSubtitle(args, scaffold) {
-    if (!args) return '';
+function buildSubtitle(rj, scaffold) {
+    if (!rj) return '';
+    const args = rj.args || {};
     const parts = [];
     if (args.variant) parts.push(args.variant);
     if (args.target) parts.push(args.target);
-    if (args.C !== undefined) parts.push(`${args.C}ch`);
+    // Lenia exports say C/K; NCA runs record channel_n/hidden_n (in args
+    // and/or at run.json top level).
+    const ch = args.C ?? args.channel_n ?? rj.channel_n;
+    if (ch !== undefined) parts.push(`${ch}ch`);
     // sharedk has ONE kernel by design (kernel + coupling matrix); the K
     // arg is inert for it and would mislabel the card.
     if (args.variant === 'sharedk') parts.push('1 kernel (shared)');
     else if (args.K !== undefined) parts.push(`${args.K} kernel${args.K === 1 ? '' : 's'}`);
+    const hn = args.hidden_n ?? rj.hidden_n;
+    if (hn !== undefined) parts.push(`hidden ${hn}`);
     if (args.params !== undefined) parts.push(`${args.params} params`);
+    if (rj.seed_type) parts.push(`seed:${rj.seed_type}`);
     // cw-*/p2-* campaign runs carry extra args the original lenia-* runs
     // didn't; surface whichever of these are present.
     if (args.cond === 'scaffold' && scaffold && scaffold.deprecated) {
@@ -222,10 +255,14 @@ async function fetchRunJson(tr, m) {
         m.finalLoss = lossVals.length ? lossVals[lossVals.length - 1] : null;
         m.minLoss = lossVals.length ? Math.min(...lossVals) : null;
         m.lossRel = extractLossRel(rj);
+        // Provenance / rollout metadata (newer runs only; absent is fine).
+        m.codeSha = rj.code_sha || null;
+        m.sourceRun = rj.source_run || null;
+        m.history = Array.isArray(rj.history) ? rj.history : null;
         const scaffold = classifyScaffold(rj.args);
         m.deprecated = scaffold.deprecated;
         const sub = document.getElementById(`subtitle_${CSS.escape(m.id)}`);
-        if (sub) sub.innerText = buildSubtitle(rj.args, scaffold) || '(no args recorded)';
+        if (sub) sub.innerText = buildSubtitle(rj, scaffold) || '(no args recorded)';
         applyDeprecatedBadge(tr, m);
         tr.runJson = rj;
         renderStatus(tr);
@@ -247,10 +284,15 @@ function applyDeprecatedBadge(tr, m) {
     if (tr.cardObj) tr.cardObj.classList.toggle('deprecated-card', !!m.deprecated);
 }
 
+function primarySteps(tr) {
+    return (tr.primaryTag && tr.streams[tr.primaryTag]) || [];
+}
+
 function renderStatus(tr) {
     const statusObj = tr.statusObj;
     if (!statusObj) return;
-    const lastStep = tr.compSteps.length ? tr.compSteps[tr.compSteps.length - 1] : null;
+    const steps = primarySteps(tr);
+    const lastStep = steps.length ? steps[steps.length - 1] : null;
     const rj = tr.runJson;
     const lp = rj ? latestLoss(rj.losses) : null;
     const step = (rj && rj.step !== undefined) ? rj.step : lastStep;
@@ -291,51 +333,58 @@ function nearestStepAtOrBelow(steps, target) {
 }
 
 function renderFrame(tr) {
-    if (!tr.compSteps.length) return;
-    tr.frameIdx = Math.max(0, Math.min(tr.frameIdx, tr.compSteps.length - 1));
-    const step = tr.compSteps[tr.frameIdx];
+    const steps = primarySteps(tr);
+    if (!steps.length) return;
+    tr.frameIdx = Math.max(0, Math.min(tr.frameIdx, steps.length - 1));
+    const step = steps[tr.frameIdx];
     if (tr.imgObj) {
         tr.imgObj.onerror = function () { this.src = BLANK_IMG; };
-        tr.imgObj.src = `${tr.dir}COMP_${pad5(step)}.png`;
+        tr.imgObj.src = `${tr.dir}${tr.primaryTag}_${pad5(step)}.png`;
     }
     if (tr.scrubObj) tr.scrubObj.value = tr.frameIdx;
     if (tr.frameLabelObj) tr.frameLabelObj.innerText = `step ${step}`;
-    renderKernelFrame(tr, step);
+    renderSecondaryFrames(tr, step);
 }
 
-// Keeps the KERNEL/COUPLING images locked to the same timeline position as
-// the COMP animation: whatever step COMP is showing, show the nearest
-// kernel/coupling snapshot at or before that step.
-function renderKernelFrame(tr, compStep) {
-    const kStep = nearestStepAtOrBelow(tr.kernelSteps, compStep);
-    if (tr.kernelObj) {
-        if (kStep !== null) {
-            tr.kernelObj.style.display = '';
-            tr.kernelObj.onerror = function () { this.style.display = 'none'; };
-            tr.kernelObj.src = `${tr.dir}KERNEL_${pad5(kStep)}.png`;
-        } else {
-            tr.kernelObj.style.display = 'none';
-        }
+// Re-derives which up-to-two secondary streams a card shows (they can only
+// appear over time as snapshots land) and keeps its two slots assigned.
+function assignSecondaryTags(tr) {
+    const { primary, secondary } = pickTags(tr.streams);
+    tr.primaryTag = primary;
+    tr.secTags = secondary;
+    tr.secSlots.forEach((slot, i) => {
+        const tag = secondary[i] || null;
+        if (slot.tag !== tag && slot.imgObj) slot.imgObj.src = BLANK_IMG;
+        slot.tag = tag;
+        if (slot.wrapObj) slot.wrapObj.style.visibility = tag ? '' : 'hidden';
+        if (slot.labelObj) slot.labelObj.innerText = tag ? tagLabel(tag) : '';
+    });
+    if (tr.secRowObj) {
+        tr.secRowObj.style.display = secondary.length ? '' : 'none';
     }
-    if (tr.kernelLabelObj) {
-        tr.kernelLabelObj.innerText = kStep !== null
-            ? `learned kernels @ step ${kStep}` : 'learned kernels';
-    }
+}
 
-    const cStep = nearestStepAtOrBelow(tr.couplingSteps, compStep);
-    if (tr.couplingObj) {
-        if (cStep !== null) {
-            tr.couplingObj.style.display = '';
-            tr.couplingObj.onerror = function () { this.style.display = 'none'; };
-            tr.couplingObj.src = `${tr.dir}COUPLING_${pad5(cStep)}.png`;
-        } else {
-            tr.couplingObj.style.display = 'none';
+// Keeps the secondary images (START/KERNEL/COUPLING/…) locked to the same
+// timeline position as the primary animation: whatever step the primary is
+// showing, show the nearest secondary snapshot at or before that step.
+function renderSecondaryFrames(tr, primaryStep) {
+    tr.secSlots.forEach(slot => {
+        if (!slot.tag) return;
+        const s = nearestStepAtOrBelow(tr.streams[slot.tag] || [], primaryStep);
+        if (slot.imgObj) {
+            if (s !== null) {
+                slot.imgObj.style.display = '';
+                slot.imgObj.onerror = function () { this.style.display = 'none'; };
+                slot.imgObj.src = `${tr.dir}${slot.tag}_${pad5(s)}.png`;
+            } else {
+                slot.imgObj.style.display = 'none';
+            }
         }
-    }
-    if (tr.couplingLabelObj) {
-        tr.couplingLabelObj.innerText = cStep !== null
-            ? `channel coupling @ step ${cStep}` : 'channel coupling';
-    }
+        if (slot.labelObj) {
+            slot.labelObj.innerText = s !== null
+                ? `${tagLabel(slot.tag)} @ step ${s}` : tagLabel(slot.tag);
+        }
+    });
 }
 
 // ---------------------------------------------------------------------
@@ -433,12 +482,12 @@ function drawSparkline(tr, m) {
 }
 
 function updateScrubRange(tr) {
-    if (tr.scrubObj) tr.scrubObj.max = Math.max(0, tr.compSteps.length - 1);
+    if (tr.scrubObj) tr.scrubObj.max = Math.max(0, primarySteps(tr).length - 1);
 }
 
 window.togglePlay = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
-    if (!tr || !tr.compSteps.length) return;
+    if (!tr || !primarySteps(tr).length) return;
     const btn = tr.playBtn;
     if (tr.playTimer) {
         clearTimeout(tr.playTimer);
@@ -449,7 +498,7 @@ window.togglePlay = function (id) {
     if (btn) btn.innerText = '⏸';
     const schedule = () => {
         tr.playTimer = setTimeout(() => {
-            tr.frameIdx = (tr.frameIdx + 1) % tr.compSteps.length;
+            tr.frameIdx = (tr.frameIdx + 1) % primarySteps(tr).length;
             renderFrame(tr);
             schedule();
         }, Math.max(40, 550 - (parseInt(tr.speedObj?.value, 10) || 3) * 50));
@@ -484,14 +533,14 @@ function buildCard(m) {
             <span id="frame_${m.id}">step –</span>
             <label style="margin-left:6px;">speed <input type="range" id="speed_${m.id}" min="1" max="10" value="3" style="width:60px;"></label>
         </div>
-        <div class="kernel-row">
-            <div>
-                <div class="sub-desc" id="kernel_label_${m.id}">learned kernels</div>
-                <div class="img-container"><img loading="lazy" id="kernel_${m.id}" style="display:none;"></div>
+        <div class="kernel-row" id="secrow_${m.id}" style="display:none;">
+            <div id="sec0_wrap_${m.id}">
+                <div class="sub-desc" id="sec0_label_${m.id}"></div>
+                <div class="img-container"><img loading="lazy" id="sec0_${m.id}" style="display:none;"></div>
             </div>
-            <div>
-                <div class="sub-desc" id="coupling_label_${m.id}">channel coupling</div>
-                <div class="img-container"><img loading="lazy" id="coupling_${m.id}" style="display:none;" title="channel coupling (red +, blue −, gray 0; older runs: grayscale)"></div>
+            <div id="sec1_wrap_${m.id}">
+                <div class="sub-desc" id="sec1_label_${m.id}"></div>
+                <div class="img-container"><img loading="lazy" id="sec1_${m.id}" style="display:none;"></div>
             </div>
         </div>
         <div class="target-row">
@@ -535,18 +584,22 @@ function buildCard(m) {
         id: m.id,
         dir: m.dir,
         updated: m.updated || '',
-        compSteps: [...m.compSteps],
-        kernelSteps: [...m.kernelSteps],
-        couplingSteps: [...m.couplingSteps],
-        frameIdx: Math.max(0, m.compSteps.length - 1),
+        streams: Object.fromEntries(
+            Object.entries(m.streams).map(([t, s]) => [t, [...s]])),
+        primaryTag: null,
+        secTags: [],
+        frameIdx: Number.MAX_SAFE_INTEGER,   // clamped to latest in renderFrame
         playTimer: null,
         runJson: null,
         cardObj: card,
         imgObj: card.querySelector(`#comp_${esc}`),
-        kernelObj: card.querySelector(`#kernel_${esc}`),
-        couplingObj: card.querySelector(`#coupling_${esc}`),
-        kernelLabelObj: card.querySelector(`#kernel_label_${esc}`),
-        couplingLabelObj: card.querySelector(`#coupling_label_${esc}`),
+        secRowObj: card.querySelector(`#secrow_${esc}`),
+        secSlots: [0, 1].map(i => ({
+            tag: null,
+            wrapObj: card.querySelector(`#sec${i}_wrap_${esc}`),
+            imgObj: card.querySelector(`#sec${i}_${esc}`),
+            labelObj: card.querySelector(`#sec${i}_label_${esc}`)
+        })),
         scrubObj: card.querySelector(`#scrub_${esc}`),
         speedObj: card.querySelector(`#speed_${esc}`),
         frameLabelObj: card.querySelector(`#frame_${esc}`),
@@ -595,6 +648,7 @@ function buildCard(m) {
     tr.liveCanvas.addEventListener('mouseup', () => { tr.liveDamaging = false; });
     tr.liveCanvas.addEventListener('mouseleave', () => { tr.liveDamaging = false; });
 
+    assignSecondaryTags(tr);
     updateScrubRange(tr);
     renderFrame(tr);
     renderStatus(tr);
@@ -612,24 +666,34 @@ function addOrUpdateCards(list) {
             const known = methods.find(x => x.id === m.id);
             if (tr) {
                 if (m.updated && m.updated > (tr.updated || '')) tr.updated = m.updated;
-                const gotComp = mergeSteps(tr.compSteps, m.compSteps);
-                const gotKernel = mergeSteps(tr.kernelSteps, m.kernelSteps);
-                const gotCoupling = mergeSteps(tr.couplingSteps, m.couplingSteps);
+                const prevPrimary = tr.primaryTag;
+                let gotPrimary = false, gotSecondary = false;
+                Object.entries(m.streams).forEach(([tag, steps]) => {
+                    if (!tr.streams[tag]) tr.streams[tag] = [];
+                    const got = mergeSteps(tr.streams[tag], steps);
+                    if (tag === prevPrimary) gotPrimary = got;
+                    else if (got) gotSecondary = true;
+                });
+                assignSecondaryTags(tr);   // a whole new stream may have appeared
                 updateScrubRange(tr);
-                if (gotComp && !tr.playTimer) {
-                    tr.frameIdx = tr.compSteps.length - 1;   // jump to latest
-                    renderFrame(tr);   // also re-syncs kernel/coupling frame
-                } else if ((gotKernel || gotCoupling) && tr.compSteps.length) {
-                    // New kernel/coupling snapshots landed without a new COMP
+                const steps = primarySteps(tr);
+                if ((gotPrimary || tr.primaryTag !== prevPrimary) && !tr.playTimer) {
+                    tr.frameIdx = steps.length - 1;   // jump to latest
+                    renderFrame(tr);   // also re-syncs secondary frames
+                } else if (gotSecondary && steps.length) {
+                    // New secondary snapshots landed without a new primary
                     // frame (or while paused mid-scrub) — resync at the step
                     // currently on screen rather than jumping the timeline.
-                    renderKernelFrame(tr, tr.compSteps[tr.frameIdx]);
+                    renderSecondaryFrames(tr, steps[Math.min(tr.frameIdx, steps.length - 1)]);
                 }
                 renderStatus(tr);
             }
-            if (known && m.updated && m.updated !== known.updated) {
-                known.updated = m.updated;
-                resort = true;
+            if (known) {
+                known.hasCode = known.hasCode || m.hasCode;
+                if (m.updated && m.updated !== known.updated) {
+                    known.updated = m.updated;
+                    resort = true;
+                }
             }
             return;
         }
@@ -728,7 +792,8 @@ function updateFilterBounds() {
     methods.forEach(m => {
         const a = m.args;
         if (a) {
-            if (a.C !== undefined) cVals.add(a.C);
+            const ch = a.C ?? a.channel_n;   // lenia args say C; NCA say channel_n
+            if (ch !== undefined) cVals.add(ch);
             if (a.K !== undefined) kVals.add(a.K);
             if (typeof a.params === 'number') {
                 pMin = (pMin === null) ? a.params : Math.min(pMin, a.params);
@@ -834,7 +899,7 @@ function applyFilters() {
                 // it, so hide it rather than guess.
                 visible = false;
             } else {
-                if (chVal !== 'any' && String(args.C) !== chVal) visible = false;
+                if (chVal !== 'any' && String(args.C ?? args.channel_n) !== chVal) visible = false;
                 if (visible && kVal !== 'any' && String(args.K) !== kVal) visible = false;
                 if (visible && paramsNarrowed) {
                     const p = args.params;
@@ -916,7 +981,58 @@ function renderModalMeta(id) {
     box.innerHTML = rows.length
         ? rows.map(r => `<div class="lm-meta-row">${r}</div>`).join('')
         : '<div class="lm-meta-row" style="color:#666;">(no timing data recorded)</div>';
+    renderModalProvenance(id);
 }
+
+// Provenance rows — code snapshot, continued-from run, rollout schedule.
+// All of these are newer run.json fields; anything missing is omitted and
+// the whole section hides when empty.
+function renderModalProvenance(id) {
+    const wrap = document.getElementById('lm-prov-wrap');
+    const box = document.getElementById('lm-prov');
+    if (!wrap || !box) return;
+    const m = methods.find(x => x.id === id);
+    const rows = [];
+    if (m && m.codeSha) {
+        let row = `<span class="lm-meta-label">Code:</span> <code>${escapeHtml(String(m.codeSha).slice(0, 12))}</code>`;
+        if (m.hasCode) {
+            row += ` — <a href="${m.dir}code.tgz" style="color:#4db8ff;">code snapshot</a>`;
+        }
+        rows.push(row);
+    }
+    if (m && m.sourceRun) {
+        const run = String(m.sourceRun);
+        rows.push(`<span class="lm-meta-label">Continues:</span> `
+            + `<a href="#" onclick="openRunPopup('${escapeHtml(run)}'); return false;" `
+            + `style="color:#4db8ff;">${escapeHtml(run)}</a>`);
+    }
+    if (m && Array.isArray(m.history)) {
+        const vals = m.history
+            .map(h => (h && typeof h === 'object') ? Number(h.ca_steps) : NaN)
+            .filter(Number.isFinite);
+        if (vals.length) {
+            const latest = vals[vals.length - 1];
+            const min = Math.min(...vals), max = Math.max(...vals);
+            const range = (min === max) ? `${latest}` : `${min}–${max}`;
+            rows.push(`<span class="lm-meta-label">Rollout:</span> `
+                + `${range} steps/iter (latest ${latest})`);
+        }
+    }
+    wrap.style.display = rows.length ? '' : 'none';
+    box.innerHTML = rows.map(r => `<div class="lm-meta-row">${r}</div>`).join('');
+}
+
+// Opens another run's popup by its bucket directory name — used by the
+// "Continues <run>" provenance link. Falls back to the bucket dir listing
+// if that run has no card (e.g. filtered out of the current bucket).
+window.openRunPopup = function (run) {
+    const id = 'lenia_' + run;
+    if (methods.some(x => x.id === id)) {
+        openLeniaModal(id);
+    } else {
+        window.open(BUCKET_BASE + run + '/', '_blank', 'noopener');
+    }
+};
 
 function openLeniaModal(id) {
     const tr = cardTrackers.find(t => t.id === id);
@@ -959,17 +1075,17 @@ function openLeniaModal(id) {
     targetImg.style.display = '';
     targetImg.src = m.dir + 'target.png';
 
-    const lastComp = tr.compSteps.length ? tr.compSteps[tr.compSteps.length - 1] : null;
-    setModalImage('lm-comp', 'lm-comp-label', 'Latest COMP',
-        lastComp !== null ? `${tr.dir}COMP_${pad5(lastComp)}.png` : null, lastComp);
-
-    const lastKernel = tr.kernelSteps.length ? tr.kernelSteps[tr.kernelSteps.length - 1] : null;
-    setModalImage('lm-kernel', 'lm-kernel-label', 'Latest KERNEL',
-        lastKernel !== null ? `${tr.dir}KERNEL_${pad5(lastKernel)}.png` : null, lastKernel);
-
-    const lastCoupling = tr.couplingSteps.length ? tr.couplingSteps[tr.couplingSteps.length - 1] : null;
-    setModalImage('lm-coupling', 'lm-coupling-label', 'Latest COUPLING',
-        lastCoupling !== null ? `${tr.dir}COUPLING_${pad5(lastCoupling)}.png` : null, lastCoupling);
+    // Latest frame of the primary stream plus each secondary stream, in the
+    // modal's three generic image slots.
+    const modalTags = [tr.primaryTag, ...(tr.secTags || [])];
+    ['lm-comp', 'lm-kernel', 'lm-coupling'].forEach((slotId, i) => {
+        const tag = modalTags[i] || null;
+        const steps = tag ? (tr.streams[tag] || []) : [];
+        const last = steps.length ? steps[steps.length - 1] : null;
+        setModalImage(slotId, slotId + '-label',
+            tag ? `Latest ${tag}` : '',
+            (tag && last !== null) ? `${tr.dir}${tag}_${pad5(last)}.png` : null, last);
+    });
 
     renderModalMeta(id);
     document.getElementById('lenia-modal').style.display = 'block';
@@ -1062,21 +1178,53 @@ async function activateOrCollapseLive(tr) {
             return;
         }
         const weights = await res.json();
-        const S = weights.size ?? 64;   // run at the trained grid size
-        tr.liveCA = new LeniaCA(weights, S);
-        tr.liveCanvas.width = S;
-        tr.liveCanvas.height = S;
-        tr.liveImgData = tr.liveCtx.createImageData(S, S);
+
+        // Engine selection by weights.json content: `kind === 'lenia'` is a
+        // trainable-Lenia export (lenia_engine.js); anything with the NCA
+        // schema (fc0_w / channel_n+hidden_n, see nca.js) steps through
+        // createCA (WebGL2, CPU fallback). Both engines share the
+        // readRGBA/step/reset/damage/readChannel API.
+        let W, H;
+        if (weights.kind === 'lenia') {
+            const S = weights.size ?? 64;   // run at the trained grid size
+            tr.liveCA = new LeniaCA(weights, S);
+            tr.liveEngine = 'lenia';
+            W = S; H = S;
+        } else if (weights.fc0_w ||
+                   (weights.channel_n !== undefined && weights.hidden_n !== undefined)) {
+            const { ca } = createCA(weights);
+            tr.liveCA = ca;
+            tr.liveEngine = 'nca';
+            W = ca.width; H = ca.height;
+            // Start the way training started (noise-trained runs reseed
+            // with noise, everything else places the trained seed(s)).
+            ca.reset(weights.seedType === 'noise');
+        } else {
+            tr.liveStatusObj.innerText = 'unrecognized weights.json format';
+            return;
+        }
+        tr.liveCanvas.width = W;
+        tr.liveCanvas.height = H;
+        tr.liveImgData = tr.liveCtx.createImageData(W, H);
         tr.liveCanvas.style.imageRendering = 'pixelated';
+        // Preserve aspect for non-square NCA grids (word models are wide).
+        tr.liveCanvas.style.width = '256px';
+        tr.liveCanvas.style.height = `${Math.round(256 * H / W)}px`;
         tr.liveStepAccum = 0;
         drawLive(tr);
         tr.liveStatusObj.innerText = 'live trained physics — click/drag to damage';
-        // Seed only makes sense when training didn't start from noise —
-        // hide it on noise-trained runs so it can't masquerade as a no-op.
+        // Per-engine button support: Seed only makes sense when training
+        // didn't start from noise (it would masquerade as a no-op); Clear
+        // (zero all channels) only exists on the Lenia engine — an NCA
+        // reset always re-places its seed.
         if (tr.liveseedBtn) {
-            const ini = weights.init;
-            tr.liveseedBtn.style.display =
-                (ini === 'seedblob' || ini === 'scaffold') ? '' : 'none';
+            const seeded = tr.liveEngine === 'lenia'
+                ? (weights.init === 'seedblob' || weights.init === 'scaffold')
+                : weights.seedType !== 'noise';
+            tr.liveseedBtn.style.display = seeded ? '' : 'none';
+        }
+        if (tr.liveclearBtn) {
+            tr.liveclearBtn.style.display = tr.liveEngine === 'lenia' ? '' : 'none';
         }
         runLiveLoop(tr);
     } catch (e) {
@@ -1103,7 +1251,10 @@ window.liveResetNoise = function (id) {
 window.liveSeed = function (id) {
     const tr = cardTrackers.find(t => t.id === id);
     if (!tr || !tr.liveCA) return;
-    tr.liveCA.resetTrained();
+    // Lenia: replay the recorded training init recipe. NCA: reset(false)
+    // places the trained seed(s).
+    if (tr.liveEngine === 'lenia') tr.liveCA.resetTrained();
+    else tr.liveCA.reset(false);
     drawLive(tr);
 };
 
@@ -1118,16 +1269,17 @@ window.liveChannels = function (id) {
 function renderLiveChannels(tr) {
     if (!tr.liveCA || !tr.livechanGrid ||
         tr.livechanGrid.style.display === 'none') return;
-    const ca = tr.liveCA, S = ca.width;
-    if (!tr.chanCanvases || tr.chanCanvases.length !== ca.C) {
+    const ca = tr.liveCA, W = ca.width, H = ca.height;
+    const nCh = ca.channel_n;
+    if (!tr.chanCanvases || tr.chanCanvases.length !== nCh) {
         tr.livechanGrid.innerHTML = '';
         tr.chanCanvases = [];
-        for (let c = 0; c < ca.C; c++) {
+        for (let c = 0; c < nCh; c++) {
             const wrap = document.createElement('div');
             wrap.style.textAlign = 'center';
             const cv = document.createElement('canvas');
-            cv.width = S; cv.height = S;
-            cv.style.width = '72px'; cv.style.height = '72px';
+            cv.width = W; cv.height = H;
+            cv.style.width = '72px'; cv.style.height = `${Math.round(72 * H / W)}px`;
             cv.style.imageRendering = 'pixelated';
             cv.style.border = '1px solid #4443';
             const lab = document.createElement('div');
@@ -1139,9 +1291,9 @@ function renderLiveChannels(tr) {
             tr.chanCanvases.push(cv);
         }
     }
-    for (let c = 0; c < ca.C; c++) {
+    for (let c = 0; c < nCh; c++) {
         const cv = tr.chanCanvases[c], cctx = cv.getContext('2d');
-        const img = cctx.createImageData(S, S);
+        const img = cctx.createImageData(W, H);
         const ch = ca.readChannel(c);
         for (let i = 0; i < ch.length; i++) {
             const v = Math.max(0, Math.min(1, ch[i]));
@@ -1190,7 +1342,10 @@ async function bootstrap() {
     const sortSel = document.getElementById('sort-select');
     if (sortSel) sortSel.value = sortKey;
     await listLeniaRuns(runs => addOrUpdateCards(leniaMethodsFrom(runs)));
-    setInterval(refreshRuns, 20000);   // new runs / snapshots appear without reload
+    // The unified gallery lists every run dir in the bucket (hundreds of
+    // per-run listings per sweep), so poll less aggressively than the old
+    // prefix-scoped gallery did.
+    setInterval(refreshRuns, 60000);   // new runs / snapshots appear without reload
     setInterval(refreshTimeLabels, 60000);   // re-render cached relTime labels
 }
 

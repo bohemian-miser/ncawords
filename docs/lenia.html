@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Gallery of Trainable Lenia runs — learned continuous cellular automata kernels and channel couplings, fit to target patterns.">
-<title>Trainable Lenia Gallery</title>
+<meta name="description" content="Unified gallery of every training run — Neural Cellular Automata and Trainable Lenia alike — with synced snapshot timelines, loss curves and live in-browser physics.">
+<title>Run Gallery</title>
 <link rel="stylesheet" href="dashboard.css">
 <style>
   /* lenia-page-only additions, layered on top of dashboard.css */
@@ -73,29 +73,32 @@
 
 <nav class="sitenav" aria-label="Site" style="display:flex;flex-wrap:wrap;gap:1.15rem;align-items:center;padding:0.85rem 1.25rem;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;font-size:0.78rem;letter-spacing:0.02em;border-bottom:1px solid #333;color:#888;">
   <a href="index.html" style="color:#ccc;text-decoration:none;">Article</a>
-  <a href="dashboard.html" style="color:#ccc;text-decoration:none;">Experiment gallery</a>
+  <a href="dashboard.html" style="color:#ccc;text-decoration:none;">Playground</a>
   <a href="research.html" style="color:#ccc;text-decoration:none;">Research log</a>
-  <a href="lenia.html" aria-current="page" style="color:#4db8ff;text-decoration:none;font-weight:bold;">Lenia lab</a>
+  <a href="lenia.html" aria-current="page" style="color:#4db8ff;text-decoration:none;font-weight:bold;">Runs</a>
   <a href="demo_modulation.html" style="color:#ccc;text-decoration:none;">Demos</a>
 </nav>
 
-<h1>Trainable Lenia Run Gallery (Live)</h1>
+<h1>Run Gallery (Live)</h1>
 <p style="text-align:center;color:#888;font-size:0.85em;max-width:640px;margin:0 auto 20px auto;">
-  Runs whose growth kernels and channel couplings are learned rather than
-  hand-tuned, read live from the same public training bucket as the
-  <a href="dashboard.html" style="color:#4db8ff;">NCA gallery</a>.
+  Every training run in the public bucket — Neural Cellular Automata and
+  Trainable Lenia alike — in one format. Try the
+  <a href="dashboard.html" style="color:#4db8ff;">interactive playground</a>
+  to free-drive any exported model.
 </p>
 
 <!--
-  Each card's main image row *plays back* pre-rendered COMP / KERNEL /
-  COUPLING PNG snapshots that the training job's WebGL engine writes to
-  the bucket, all driven by one shared timeline (scrubbing/playing COMP
-  re-syncs the nearest KERNEL/COUPLING frame at or before that step).
+  Each card's main image row *plays back* pre-rendered <TAG>_#####.png
+  snapshots that the training job writes to the bucket (COMP training
+  frames, plus up to two synced secondary streams such as START / KERNEL /
+  COUPLING), all driven by one shared timeline: scrubbing/playing the
+  primary re-syncs the nearest secondary frame at or before that step.
 
   The "Run live" section per card is a separate, real in-browser
-  simulator (lenia_engine.js / LeniaCA) that steps the run's exported
-  weights.json directly, reproducing the trained physics from scratch
-  rather than replaying snapshots.
+  simulator that steps the run's exported weights.json directly —
+  lenia_engine.js (LeniaCA) for Lenia exports, nca.js (createCA) for
+  NCA exports — reproducing the trained physics from scratch rather
+  than replaying snapshots.
 -->
 
 <!-- Filter Controls -->
@@ -157,6 +160,10 @@
         <div id="lm-tags" style="font-size:0.85em; color:#ccc;"></div>
         <h4>Timing</h4>
         <div id="lm-timing"></div>
+        <div id="lm-prov-wrap" style="display:none;">
+          <h4>Provenance</h4>
+          <div id="lm-prov"></div>
+        </div>
         <h4>Loss</h4>
         <div id="lm-loss-stats" style="font-size:0.85em; color:#ccc; white-space:pre-line;"></div>
         <h4>Bucket links</h4>
@@ -173,23 +180,28 @@
         <div class="sub-desc">Target</div>
         <div class="img-container"><img id="lm-target"></div>
       </div>
+      <!-- Three generic latest-frame slots: primary stream, then up to two
+           secondary streams; labels are filled in per run. -->
       <div>
-        <div class="sub-desc" id="lm-comp-label">Latest COMP</div>
+        <div class="sub-desc" id="lm-comp-label"></div>
         <div class="img-container"><img id="lm-comp"></div>
       </div>
       <div>
-        <div class="sub-desc" id="lm-kernel-label">Latest KERNEL</div>
+        <div class="sub-desc" id="lm-kernel-label"></div>
         <div class="img-container"><img id="lm-kernel"></div>
       </div>
       <div>
-        <div class="sub-desc" id="lm-coupling-label">Latest COUPLING</div>
-        <div class="img-container"><img id="lm-coupling" title="channel coupling (red +, blue −, gray 0; older runs: grayscale)"></div>
+        <div class="sub-desc" id="lm-coupling-label"></div>
+        <div class="img-container"><img id="lm-coupling"></div>
       </div>
     </div>
   </div>
 </div>
 
-<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-5</div>
-<script type="module" src="lenia.js?v=lenia-15"></script>
+<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-16</div>
+<!-- Optional local overrides (gitignored); a 404 on this plain script tag
+     is harmless — lenia.js falls back to the default bucket. -->
+<script src="config.js"></script>
+<script type="module" src="lenia.js?v=lenia-16"></script>
 </body>
 </html>

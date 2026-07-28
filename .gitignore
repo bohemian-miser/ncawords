@@ -3,3 +3,4 @@ __pycache__/
 logs/
 snaps/
 *.pyc
+docs/config.js
