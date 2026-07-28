@@ -1,131 +1,97 @@
-# NCA fleet — Growing Neural Cellular Automata
+# NCA Fleet
 
-A cloneable research fleet for training Neural Cellular Automata (Distill's
-[Growing NCA](https://distill.pub/2020/growing-ca/) lineage plus Lenia-style
-continuous CAs) on cheap CPUs — a local machine and any ssh-reachable
-workers — publishing every run to a public GCS bucket that a static
-gallery/dashboard reads directly.
+Train **neural cellular automata** — tiny models where every pixel runs the same
+little rule, and structure grows from a single seed — then watch them in a
+browser gallery. Words, emoji, textures, Game-of-Life physics, Lenia kernels.
 
-## Quick start
+You say what you want in chat; a coding agent writes and launches the
+experiments; results stream to your bucket and appear in the gallery, live.
 
-```bash
-git clone <this-repo> && cd <repo>
-./init.sh --bucket my-bucket --project my-gcp-project \
-          [--sa-key ~/.config/nca/key.json] [--remote-host alias ...]
-./serve.sh          # gallery at http://localhost:8000/lenia.html
-```
+---
 
-Then open Claude Code in this directory and say what you want to train —
-CLAUDE.md teaches it how to queue jobs, run lanes, and collect results.
-
-`init.sh` writes `fleet.config.json` (gitignored; read by
-`nca/fleetconfig.py`) and `docs/config.js` (`window.NCA_CONFIG` for the
-static pages). Everything falls back to built-in defaults when
-unconfigured. The bucket must be public-read (with CORS) for the
-gallery/dashboard; the service-account key only needs write access for
-uploads.
-
-## Queues and lanes
-
-A queue file is one job per line (blank lines and `#` comments skipped):
-
-```
-<run-name> <python-module> <args...>
-```
-
-See `queues/example.txt`. Lane runners execute a queue sequentially:
+## Quickstart
 
 ```bash
-scripts/remote_queue.sh queues/mylane.txt [host]  # on a remote worker
-scripts/local_queue.sh  queues/mylane.txt         # on this machine
+git clone <this-repo> && cd ncawords
+./init.sh --bucket YOUR_GCS_BUCKET --project YOUR_GCP_PROJECT
+./serve.sh                      # gallery at http://localhost:8791/lenia.html
 ```
 
-(`remote_queue.sh`/`local_queue.sh` are aliases for `cse_queue.sh` /
-`pi_queue.sh`.) `[host]` defaults to the first `remote_hosts` entry. The
-remote runner ships `nca/` to the worker, holds the ssh session for the
-job's lifetime, retries dropped sessions (jobs resume from checkpoints),
-then collects, uploads and deletes the remote run dir. The local runner
-trains niced on this machine into `local_runs_dir`.
-`scripts/cse_collect.py [--status-only]` rsyncs remote runs down and
-uploads anything newer than its bucket copy.
+Then open an agent (Claude Code, etc.) in this directory and just say what you
+want:
 
-## Run-dir contract
+> *"Train a growing NCA that writes HELLO, then harden it with damage and noise."*
 
-Each run is a directory `<name>/` (locally under `local_runs_dir`, and
-mirrored to `gs://<bucket>/<name>/`) containing:
+`CLAUDE.md` tells the agent how the fleet works, so it can queue jobs, run them,
+and collect results without further instruction.
 
-- `run.json` — manifest, updated every log interval: `text`, `module`,
-  `args`, `code_sha` (git SHA of the shipped code), `source_run` (parent
-  run when continuing), `channel_n`/`hidden_n`, `seed_type`,
-  `steps_total`, `step`, `losses` `[[step, loss], ...]`, `history`
-  (per-interval dicts with `step`, `loss` and extras such as `ca_steps`,
-  phase, aux metrics), `tags`, timestamps.
-- `weights.json` — playground-ready weights the web viewer loads.
-- `latest.pth` / `ckpt.pth` — model state / resumable checkpoint.
-- snapshot PNGs, prefixed by kind: `COMP_*` (composite board at a step),
-  `START_*` (initial state), `TARGET*` (training target), `KERNEL_*`
-  and `COUPLING_*` (Lenia kernels / coupling matrix).
-- `code.tgz` — the exact `nca/` source tree the job ran.
+Requirements: Python 3.10+, a GCS bucket (public-read if you want the gallery to
+load without auth), and a service-account key or `gcloud` login.
 
-**Continue-training convention:** a derived run is named
-`<base>__<tag>` (double underscore) and passes `--source=<base>` so its
-`run.json` records `source_run` and the lineage stays traceable.
+---
 
-**Reproduce any run:** download `gs://<bucket>/<run>/code.tgz`, unpack it
-onto `PYTHONPATH`, and re-run the module with the `args` recorded in that
-run's `run.json`.
+## Running jobs yourself
+
+A queue file is one job per line — `<run-name> <python-module> <args...>`:
+
+```
+mytext-r0  nca.train_ladder_seed --text=HELLO --steps=20000 --scaffold=3line
+smiley     nca.train_emoji_vanilla --emoji=1f642 --label=smiley --damage-p=0.5
+```
+
+```bash
+scripts/local_queue.sh  queues/mine.txt          # run here
+scripts/remote_queue.sh queues/mine.txt myhost   # or on an ssh host
+python3 scripts/cse_collect.py                   # pull results -> bucket
+```
+
+Lanes run one job at a time and resume from checkpoints if interrupted, so
+stopping and restarting is safe.
+
+## What a run looks like
+
+Every run gets a folder in your bucket:
+
+| File | What it is |
+|---|---|
+| `run.json` | config, loss history, timings, `code_sha`, `source_run`, `ca_steps` |
+| `weights.json` | browser-runnable model — powers the gallery's live widget |
+| `COMP_*.png` | snapshots over training (plus `START_`, `TARGET`, `KERNEL_`, …) |
+| `code.tgz` | the exact source that produced this run |
+| `ckpt.pth` | checkpoint for resuming or continuing |
+
+Because the code ships *with* the run, anything you like is reproducible:
+download `code.tgz`, read the args from `run.json`, run it again.
+
+## Continuing a trained model
+
+Point a new run at an existing one and keep training — with damage, noise,
+longer horizons, whatever:
+
+```
+mytext-r0__tough  nca.train_noisefester --source=mytext-r0 --mix
+```
+
+The `<base>__<tag>` name keeps the lineage obvious, and the gallery links the
+child back to its parent.
+
+## The gallery
+
+`./serve.sh` → **Runs** lists every run with snapshots, loss curves, learned
+kernels, and a live in-browser simulation you can seed, damage, and play with.
+**Playground** and **Demos** are hand-built interactive pages: paint which rules
+apply where, steer an organism with a gradient field, watch two species share a
+grid.
 
 ## Layout
 
 ```
-nca/
-  model.py       # the CA update rule (PyTorch): perception -> 1x1 MLP ->
-                 # stochastic residual update -> alive masking
-  fleetconfig.py # fleet.config.json loader (bucket/project/hosts/dirs)
-  train.py       # train one letter model (sample pool + damage; exports JSON)
-  train_word.py  # ONE model grows a whole string on one wide grid: one seed
-                 # per letter, a 5-bit letter code in hidden channels 4-8
-  train_lenia.py # continuous (Lenia-style) CA variants
-  ocr_eval.py    # grow each letter from seed, OCR with tesseract (psm 10)
-  ocr_word.py    # grow a word model, OCR the whole picture as a word (psm 8)
-  make_golden.py # deterministic rollout dump for verifying the JS engine
-  train_all.py   # multi-process orchestrator with per-letter OCR gates
-scripts/
-  remote_queue.sh / local_queue.sh   # lane runners (see above)
-  cse_collect.py   # pull remote runs + upload to the bucket
-  ladder.sh        # escalation: singles -> double "GO" -> word "GROW",
-                   # each rung OCR-gated
-  build_report.py  # aggregate OCR reports + weights index for the site
-docs/
-  index.html / style.css / main.js   # the article
-  lenia.html                         # run gallery (reads the bucket)
-  dashboard.html                     # training dashboard
-  nca.js                             # browser engine (WebGL2 + CPU fallback)
-  API.md                             # engine <-> page contract
-  test/test_engine.mjs               # node test vs Python golden rollout
-queues/          # lane queue files (gitignored except example.txt)
-weights/  grown/  ocr/  logs/        # training artifacts (synced into docs/)
+nca/       training modules (the experiments)
+scripts/   queue runners, collection, exports, scoring
+docs/      the static site (gallery, demos, engines)
+queues/    your job lists (gitignored)
 ```
 
-## Model
-
-Distill's architecture, shrunk for CPU training: letters use 12 channels
-(RGB, alpha, 8 hidden), 36 perception features (identity + Sobel x/y),
-64 hidden units — ~2.4k parameters per letter on a 32×32 grid. Word models
-use 16 channels / 80 hidden; seeds are distinguished only by 5 code numbers
-in their initial hidden state, so one rule grows different glyphs.
-
-Reference implementation: [google-research/self-organising-systems](https://github.com/google-research/self-organising-systems)
-(Apache 2.0). This repo is an independent PyTorch/JS port trained from
-scratch on CPU.
-
-## Direct usage
-
-```bash
-.venv/bin/python -m nca.train --char A            # train one letter
-.venv/bin/python -m nca.ocr_eval weights/0041.json  # grow + OCR it
-.venv/bin/python -m nca.train_word --text GO      # whole string, one grid
-.venv/bin/python -m nca.ocr_word weights/word_GO.json
-node docs/test/test_engine.mjs                    # JS engine vs golden
-./serve.sh                                        # view the site locally
-```
+Config lives in `fleet.config.json` (gitignored, written by `init.sh`) and
+`docs/config.js` for the web pages; everything falls back to defaults when
+unset.
