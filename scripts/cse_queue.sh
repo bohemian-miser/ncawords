@@ -1,0 +1,48 @@
+#!/bin/bash
+# Sequential remote job queue (one lane). Feed it a queue file where each
+# line is: <job-name> <python-module> <args...>
+#   scripts/cse_queue.sh <queue-file> [host]
+# [host] defaults to the first remote_hosts entry in fleet.config.json.
+# Runs each job to completion in a locally-held SSH session (retry+resume
+# on drops via checkpoints in the remote home), then collects, uploads to
+# the bucket, and removes the remote run dir (remote homes have small
+# quotas). Keep lane count modest — remote login VMs share cores and we
+# nice -n 19.
+set -uo pipefail
+QUEUE=$1
+HOST="${2:-}"
+cd "$(dirname "$0")/.."
+if [ -z "$HOST" ]; then
+  HOST=$(python3 -c "import sys; sys.path.insert(0, '.'); \
+from nca import fleetconfig; print(fleetconfig.load()['remote_hosts'][0])")
+fi
+
+# Ship the source tree and run via PYTHONPATH — pip installs into the
+# shared NFS venv race between lanes and silently keep stale files.
+CODE_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+tar czf /tmp/nca-code-$CODE_SHA.tgz nca/ 2>/dev/null
+ssh -n -o BatchMode=yes "$HOST" "mkdir -p ~/nca-src/nca"
+rsync -az --delete nca/ "$HOST":nca-src/nca/
+
+mapfile -t QLINES < "$QUEUE"
+for line in "${QLINES[@]}"; do
+  [ -z "$line" ] && continue
+  case "$line" in \#*) continue;; esac
+  NAME=$(echo "$line" | awk '{print $1}')
+  MODULE=$(echo "$line" | awk '{print $2}')
+  ARGS=$(echo "$line" | cut -d' ' -f3-)
+  echo "[queue] ==== $NAME ===="
+  ssh -n -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
+  scp -q /tmp/nca-code-$CODE_SHA.tgz "$HOST":nca-runs/$NAME/code.tgz 2>/dev/null || true
+  for attempt in $(seq 1 200); do
+    ssh -n -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
+      "cd ~ && NCA_CODE_SHA=$CODE_SHA PYTHONPATH=\$HOME/nca-src nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
+      && break
+    echo "[queue] $NAME dropped (attempt $attempt); resuming in 60s"
+    sleep 60
+  done
+  echo "[queue] $NAME done; collecting + cleaning"
+  .venv/bin/python scripts/cse_collect.py < /dev/null || true
+  ssh -n -o BatchMode=yes "$HOST" "rm -rf nca-runs/$NAME"
+done
+echo "[queue] lane complete: $QUEUE"

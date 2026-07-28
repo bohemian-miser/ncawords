@@ -1,15 +1,15 @@
 """Train ONE NCA that grows a whole multi-character string on a single grid.
 
 Each character gets its own seed cell, placed at the center of a fixed-pitch
-slot. Seeds are distinguished by a 6-bit binary code (the character's index
-in CHARSET) written into hidden channels 4..9 at seed time; remaining hidden
+slot. Seeds are distinguished by a 5-bit binary code (the letter's alphabet
+index) written into hidden channels 4..8 at seed time; remaining hidden
 channels are 1. The model must learn code -> glyph, so different seeds grow
-different characters while sharing one update rule.
+different letters while sharing one update rule.
 
-State layout (channel_n=16): 0-2 RGB, 3 alpha, 4-9 char code, 10-15 free.
+State layout (channel_n=16): 0-2 RGB, 3 alpha, 4-8 letter code, 9-15 free.
 
 Usage:
-  python -m nca.train_word --text COMP --steps 2500 --out weights/word_COMP.json
+  python -m nca.train_word --text GO --steps 1200 --out weights/word_GO.json
 """
 
 import argparse
@@ -29,15 +29,16 @@ PITCH = 24          # px per character slot
 MARGIN = 12         # left/right margin
 GRID_H = 32
 CODE_CH0 = 4        # first code channel
-CODE_BITS = 6       # 6 bits = 64 slots, enough for the 36-char set
-
-CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+CODE_BITS = 6
 
 
-def char_code(ch):
-    """6-bit binary code for A-Z and 0-9, as floats 0/1."""
-    i = CHARSET.find(ch.upper())
-    assert i >= 0, f"unsupported character {ch!r} (allowed: {CHARSET})"
+def letter_code(ch):
+    """6-bit binary code for A-Z and 0-9."""
+    if ch.isdigit():
+        i = 26 + int(ch)
+    else:
+        i = ord(ch.upper()) - ord("A")
+    assert 0 <= i < 36, f"only A-Z and 0-9 supported, got {ch!r}"
     return [(i >> b) & 1 for b in range(CODE_BITS)]
 
 
@@ -46,17 +47,12 @@ def word_geometry(text):
     seeds = []
     for i, ch in enumerate(text):
         seeds.append({"x": MARGIN + PITCH * i + PITCH // 2, "y": GRID_H // 2,
-                      "code": char_code(ch), "char": ch})
+                      "code": letter_code(ch), "char": ch})
     return w, GRID_H, seeds
 
 
 def render_word(text, glyph=22, font_path=FONT_PATH):
-    """Each char centered in its slot, per-char color, premultiplied RGBA.
-
-    Seed positions are then snapped onto ink within each character's slot:
-    a seed sitting on background (the hollow middle of C, O, 6, 0...) is
-    told by the loss to switch itself off, which kills the whole grid.
-    """
+    """Each char centered in its slot, per-char color, premultiplied RGBA."""
     w, h, seeds = word_geometry(text)
     font = ImageFont.truetype(font_path, glyph)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -68,24 +64,11 @@ def render_word(text, glyph=22, font_path=FONT_PATH):
                   font=font, fill=char_color(ch) + (255,))
     arr = np.asarray(img, dtype=np.float32) / 255.0
     arr[..., :3] *= arr[..., 3:]
-    target = arr.transpose(2, 0, 1)  # [4, H, W]
-
-    from nca.train import ink_seed_pos
-    tt = torch.from_numpy(target)
-    for i, s in enumerate(seeds):
-        x0 = MARGIN + PITCH * i
-        sx, sy = ink_seed_pos(tt, region=(x0, x0 + PITCH))
-        s["x"], s["y"] = sx, sy
-    return target, seeds
+    return arr.transpose(2, 0, 1), seeds  # [4, H, W]
 
 
-def make_word_seed(text, channel_n=16, n=1, seeds=None, glyph=22):
-    """One seed per character. `seeds` must be the ink-anchored positions from
-    render_word (or a weight file); recomputing slot centers here would seed
-    hollow glyphs on background and kill the grid."""
-    w, h, _ = word_geometry(text)
-    if seeds is None:
-        _, seeds = render_word(text, glyph)
+def make_word_seed(text, channel_n=16, n=1):
+    w, h, seeds = word_geometry(text)
     x = torch.zeros(n, channel_n, h, w)
     for s in seeds:
         x[:, 3:, s["y"], s["x"]] = 1.0
@@ -95,8 +78,8 @@ def make_word_seed(text, channel_n=16, n=1, seeds=None, glyph=22):
 
 
 def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
-          batch=6, pool_size=128, lr=2e-3, damage_n=2, ca_min=36, ca_max=56,
-          log_every=100, out=None, snap_dir=None, damage_start=0.3):
+          batch=6, pool_size=128, lr=2e-3, damage_n=1, ca_min=36, ca_max=56,
+          log_every=100, out=None, snap_dir=None):
     torch.manual_seed(sum(map(ord, text)) + 99)
     tgt, seeds = render_word(text, glyph)
     target = torch.from_numpy(tgt)[None].repeat(batch, 1, 1, 1)
@@ -106,9 +89,7 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
     sched = torch.optim.lr_scheduler.MultiStepLR(
         opt, milestones=[int(steps * 0.7)], gamma=0.1)
 
-    seed = make_word_seed(text, channel_n, seeds=seeds)
-    print(f"[{text}] seeds (ink-anchored): "
-          f"{[(s['char'], s['x'], s['y']) for s in seeds]}", flush=True)
+    seed = make_word_seed(text, channel_n)
     pool = SamplePool(seed, pool_size)
     h, w = seed.shape[2], seed.shape[3]
 
@@ -120,12 +101,10 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
                 .mean(dim=(1, 2, 3)).argsort(descending=True)
         x = x[loss_rank]
         x[:1] = seed
-        # Punch holes in the best-grown samples once growth is established and
-        # grade the model on the repair (the paper's "Regenerating" regime).
-        # The mask is built in pixel space so it actually lands on this long,
-        # thin grid — the old square-mask-then-slice missed it almost entirely.
-        if damage_n and step > steps * damage_start:
-            x[-damage_n:] *= damage_mask(damage_n, h, w, "cpu")
+        if damage_n:
+            # non-square grid: build mask on short axis scale
+            m = damage_mask(damage_n, max(h, w), "cpu")[:, :, :h, :w]
+            x[-damage_n:] *= m
 
         n_ca = int(torch.randint(ca_min, ca_max + 1, (1,)))
         x = model(x, steps=n_ca)
@@ -153,9 +132,9 @@ def train(text, steps=1200, glyph=22, channel_n=16, hidden_n=80,
     return model
 
 
-def grow_word_image(model, text, channel_n, n_steps=80, upscale=4, seeds=None):
+def grow_word_image(model, text, channel_n, n_steps=80, upscale=4):
     with torch.no_grad():
-        x = make_word_seed(text, channel_n, seeds=seeds)
+        x = make_word_seed(text, channel_n)
         x = model(x, steps=n_steps)
     img = to_rgb(x)[0].clamp(0, 1).permute(1, 2, 0).numpy()
     im = Image.fromarray((img * 255).astype(np.uint8))

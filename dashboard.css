@@ -1,0 +1,30 @@
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1a1a1a; color: #f0f0f0; margin: 0; padding: 20px; }
+h1 { text-align: center; margin-bottom: 30px; letter-spacing: 2px; }
+#cards-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+
+.card { background: #2a2a2a; border-radius: 8px; padding: 20px; text-align: center; width: 400px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); border: 2px solid #444; transition: transform 0.2s; cursor: pointer; }
+.card:hover { transform: scale(1.02); border-color: #666; }
+.card h3 { margin-top: 0; font-size: 1.1em; color: #4db8ff; height: 30px; }
+.status { font-size: 0.9em; color: #888; margin-top: 15px; }
+
+.side-by-side { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.side-by-side > div { width: 48%; }
+.sub-desc { font-size: 0.8em; color: #aaa; margin-bottom: 5px; }
+.img-container { width: 100%; height: 180px; display: flex; justify-content: center; align-items: center; background: #111; border-radius: 4px; overflow: hidden; }
+.img-container img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+
+/* Modal for history gallery */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 1000; overflow-y: auto; }
+.modal-content { display: flex; flex-direction: column; align-items: center; padding: 40px; position: relative; }
+.modal-close { position: fixed; top: 20px; right: 40px; color: white; font-size: 40px; cursor: pointer; z-index: 1100; font-weight: bold; }
+.modal-close:hover { color: #ff5555; }
+.modal-gallery { display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; max-width: 1200px; }
+.gallery-item { background: #222; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #444; }
+.gallery-item img { width: 150px; height: 150px; object-fit: contain; image-rendering: pixelated; display: block; margin-bottom: 8px; background: #000; }
+.gallery-item span { font-size: 0.85em; color: #ccc; }
+
+@keyframes pulse {
+  0% { opacity: 0.5; }
+  50% { opacity: 1; }
+  100% { opacity: 0.5; }
+}

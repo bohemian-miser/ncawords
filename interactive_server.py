@@ -1,0 +1,249 @@
+import os
+import json
+import time
+import glob
+import asyncio
+import threading
+from pathlib import Path
+from pydantic import BaseModel
+from typing import Dict, Optional, Any
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/")
+def index():
+    return FileResponse("dashboard.html", headers={"Cache-Control": "no-store"})
+
+
+@app.middleware("http")
+async def no_stale_assets(request, call_next):
+    """LAN dashboard: force revalidation of HTML/JS so edits show up on
+    reload without hard-refreshing (root files carry a fixed ?v=dev)."""
+    response = await call_next(request)
+    if request.url.path.endswith((".js", ".html")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+# ---------------------------------------------------------------------------
+# Cloud state: Vertex job statuses + training runs discovered in the GCS
+# bucket. The bucket is public-read, so the browser loads images directly
+# from PUBLIC_BASE and the server only supplies listings/statuses.
+# ---------------------------------------------------------------------------
+from nca.fleetconfig import load as _fleet_load
+_CFG = _fleet_load()
+PROJECT_ID = _CFG["project"]
+VERTEX_LOCATION = "us-central1"
+# Every region with spot-T4 training quota; jobs are spread across them.
+VERTEX_REGIONS = ["us-central1", "us-east1", "us-west1", "europe-west2", "europe-west4"]
+BUCKET_NAME = _CFG["bucket"]
+PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
+
+_cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}, "weights": []}
+_cloud_refreshing = threading.Lock()
+
+
+def fetch_cloud_state(ttl=60, blocking=True):
+    """Cloud listings take seconds; non-blocking callers (the SSE tick) get
+    the stale cache back immediately while a thread refreshes it."""
+    now = time.time()
+    if now - _cloud_cache["t"] < ttl:
+        return _cloud_cache
+    if not blocking:
+        if _cloud_refreshing.acquire(blocking=False):
+            def _refresh():
+                try:
+                    _fetch_cloud_state_now()
+                finally:
+                    _cloud_refreshing.release()
+            threading.Thread(target=_refresh, daemon=True).start()
+        return _cloud_cache
+    with _cloud_refreshing:
+        if time.time() - _cloud_cache["t"] < ttl:
+            return _cloud_cache
+        return _fetch_cloud_state_now()
+
+
+def _fetch_cloud_state_now():
+    jobs = {}
+    try:
+        from google.cloud import aiplatform
+        for region in VERTEX_REGIONS:
+            try:
+                for j in aiplatform.CustomJob.list(project=PROJECT_ID, location=region):
+                    name = j.display_name.removesuffix("-custom-job")
+                    jobs[name] = {"state": j.state.name.replace("JOB_STATE_", ""),
+                                  "region": region}
+            except Exception as e:
+                print(f"Warning: could not list Vertex jobs in {region}: {e}")
+    except Exception as e:
+        print(f"Warning: could not list Vertex jobs: {e}")
+
+    runs = {}
+    weights = []
+    try:
+        from google.cloud import storage
+        client = storage.Client(project=PROJECT_ID)
+        for blob in client.list_blobs(BUCKET_NAME):
+            if "/" not in blob.name:
+                continue
+            run, fname = blob.name.split("/", 1)
+            if fname.startswith("COMP_"):
+                try:
+                    step = int(fname[5:10])
+                except ValueError:
+                    continue
+                r = runs.setdefault(run, {"step": -1, "updated": ""})
+                r["step"] = max(r["step"], step)
+                if blob.updated:
+                    u = blob.updated.isoformat()
+                    if u > r["updated"]:
+                        r["updated"] = u
+            elif fname == "weights.json":
+                weights.append(run)
+    except Exception as e:
+        print(f"Warning: could not list bucket runs: {e}")
+
+    _cloud_cache.update({"t": time.time(), "runs": runs, "jobs": jobs,
+                         "weights": weights})
+    return _cloud_cache
+
+
+@app.get("/api/jobs")
+def get_jobs():
+    return fetch_cloud_state()["jobs"]
+
+
+@app.get("/api/methods")
+def get_methods():
+    methods = []
+    if os.path.exists("methods.json"):
+        with open("methods.json") as f:
+            methods = json.load(f)
+
+    # Non-blocking: serve local methods + whatever cloud data is cached;
+    # the frontend refreshes periodically and streams new cards in.
+    cloud = fetch_cloud_state(blocking=False)
+    local_ids = {m["id"] for m in methods}
+    for run, info in sorted(cloud["runs"].items()):
+        run_id = f"cloud_{run}"
+        if run_id in local_ids:
+            continue
+        job = cloud["jobs"].get(run, {})
+        state, region = job.get("state", ""), job.get("region", "")
+        entry = {
+            "id": run_id,
+            "title": f"☁ {run}",
+            "dir": f"{PUBLIC_BASE}{run}/",
+            "desc": f"Vertex AI run ({state or 'no active job'}"
+                    + (f", {region}" if region else "") + ")",
+            "seedType": "cloud",
+            "cloud": True,
+            "vertex_state": state,
+            "updated": info.get("updated", ""),
+        }
+        if run in cloud["weights"]:
+            entry["weights_url"] = f"{PUBLIC_BASE}{run}/weights.json"
+        methods.append(entry)
+
+    # Jobs that are queued/running but haven't written a snapshot yet still
+    # get a card, so the whole fleet is discoverable the moment it exists.
+    for name, job in sorted(cloud["jobs"].items()):
+        if name in cloud["runs"] or f"cloud_{name}" in local_ids:
+            continue
+        if job.get("state") not in ("PENDING", "RUNNING", "QUEUED"):
+            continue
+        methods.append({
+            "id": f"cloud_{name}",
+            "title": f"☁ {name}",
+            "dir": f"{PUBLIC_BASE}{name}/",
+            "desc": f"{job['state']} in {job['region']} — no snapshots yet",
+            "seedType": "cloud",
+            "cloud": True,
+            "vertex_state": job["state"],
+        })
+    return methods
+
+@app.get("/api/notes")
+def get_notes():
+    if not os.path.exists("notes.json"):
+        return {}
+    with open("notes.json", "r") as f:
+        return json.load(f)
+
+class NoteRequest(BaseModel):
+    dir: str = "unknown"
+    note: str = ""
+
+@app.post("/api/notes")
+def post_notes(req: NoteRequest):
+    notes_db = {}
+    if os.path.exists("notes.json"):
+        with open("notes.json", "r") as f:
+            notes_db = json.load(f)
+            
+    if req.dir not in notes_db:
+        notes_db[req.dir] = []
+        
+    notes_db[req.dir].append({
+        "timestamp": time.time(),
+        "note": req.note
+    })
+    with open("notes.json", "w") as f:
+        json.dump(notes_db, f)
+    return {"status": "saved", "notes": notes_db[req.dir]}
+
+def fetch_status_sync():
+    status = {}
+    methods = [d for d in glob.glob("snaps_*") if os.path.isdir(d)]
+    for d in methods:
+        files = os.listdir(d)
+        comps = []
+        for f in files:
+            if f.startswith('COMP_'):
+                try: comps.append(int(f.split('_')[1].split('.')[0]))
+                except ValueError: pass
+        max_step = max(comps) if comps else -1
+        status[d + '/'] = max_step
+
+    # Cloud runs keyed by their public URL prefix, matching the 'dir' the
+    # /api/methods endpoint hands to the frontend.
+    cloud = fetch_cloud_state(blocking=False)
+    for run, info in cloud["runs"].items():
+        status[f"{PUBLIC_BASE}{run}/"] = info["step"]
+    return status
+
+async def status_generator():
+    while True:
+        status = await asyncio.to_thread(fetch_status_sync)
+        yield f"data: {json.dumps(status)}\n\n"
+        await asyncio.sleep(1.5)
+
+@app.get("/api/status_stream")
+async def status_stream():
+    return StreamingResponse(status_generator(), media_type="text/event-stream")
+
+# Mount everything else to static (CSS, JS, outputs)
+app.mount("/", StaticFiles(directory=".", html=False), name="static")
+
+if __name__ == "__main__":
+    from nca.manager import update_methods
+    try:
+        update_methods("methods.json")
+    except Exception as e:
+        print(f"Warning: Failed to update methods.json: {e}")
+        
+    print(f"Starting Interactive NCA Orchestration Server on http://localhost:8791/")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8791)

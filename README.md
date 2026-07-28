@@ -1,57 +1,97 @@
-# ncawords — Growing Neural Cellular Automata for Text
+# NCA Fleet
 
-A reimplementation of [Growing Neural Cellular Automata](https://distill.pub/2020/growing-ca/)
-(Mordvintsev et al., Distill 2020) where the organisms are **letter glyphs and
-whole words**: tiny neural CAs trained so a single seed pixel grows into a
-character — verified by Tesseract OCR — plus an interactive distill-style
-article that runs the trained models live in the browser.
+Train **neural cellular automata** — tiny models where every pixel runs the same
+little rule, and structure grows from a single seed — then watch them in a
+browser gallery. Words, emoji, textures, Game-of-Life physics, Lenia kernels.
 
-**[▶ Read the article / run the models](https://bohemian-miser.github.io/ncawords/)**
+You say what you want in chat; a coding agent writes and launches the
+experiments; results stream to your bucket and appear in the gallery, live.
 
-Reference implementation: [google-research/self-organising-systems](https://github.com/google-research/self-organising-systems)
-(Apache 2.0). This repo is an independent PyTorch/JS port trained from scratch
-on a Raspberry Pi 5 (CPU only).
+---
+
+## Quickstart
+
+```bash
+git clone <this-repo> && cd ncawords
+./init.sh --bucket YOUR_GCS_BUCKET --project YOUR_GCP_PROJECT
+./serve.sh                      # gallery at http://localhost:8791/lenia.html
+```
+
+Then open an agent (Claude Code, etc.) in this directory and just say what you
+want:
+
+> *"Train a growing NCA that writes HELLO, then harden it with damage and noise."*
+
+`CLAUDE.md` tells the agent how the fleet works, so it can queue jobs, run them,
+and collect results without further instruction.
+
+Requirements: Python 3.10+, a GCS bucket (public-read if you want the gallery to
+load without auth), and a service-account key or `gcloud` login.
+
+---
+
+## Running jobs yourself
+
+A queue file is one job per line — `<run-name> <python-module> <args...>`:
+
+```
+mytext-r0  nca.train_ladder_seed --text=HELLO --steps=20000 --scaffold=3line
+smiley     nca.train_emoji_vanilla --emoji=1f642 --label=smiley --damage-p=0.5
+```
+
+```bash
+scripts/local_queue.sh  queues/mine.txt          # run here
+scripts/remote_queue.sh queues/mine.txt myhost   # or on an ssh host
+python3 scripts/cse_collect.py                   # pull results -> bucket
+```
+
+Lanes run one job at a time and resume from checkpoints if interrupted, so
+stopping and restarting is safe.
+
+## What a run looks like
+
+Every run gets a folder in your bucket:
+
+| File | What it is |
+|---|---|
+| `run.json` | config, loss history, timings, `code_sha`, `source_run`, `ca_steps` |
+| `weights.json` | browser-runnable model — powers the gallery's live widget |
+| `COMP_*.png` | snapshots over training (plus `START_`, `TARGET`, `KERNEL_`, …) |
+| `code.tgz` | the exact source that produced this run |
+| `ckpt.pth` | checkpoint for resuming or continuing |
+
+Because the code ships *with* the run, anything you like is reproducible:
+download `code.tgz`, read the args from `run.json`, run it again.
+
+## Continuing a trained model
+
+Point a new run at an existing one and keep training — with damage, noise,
+longer horizons, whatever:
+
+```
+mytext-r0__tough  nca.train_noisefester --source=mytext-r0 --mix
+```
+
+The `<base>__<tag>` name keeps the lineage obvious, and the gallery links the
+child back to its parent.
+
+## The gallery
+
+`./serve.sh` → **Runs** lists every run with snapshots, loss curves, learned
+kernels, and a live in-browser simulation you can seed, damage, and play with.
+**Playground** and **Demos** are hand-built interactive pages: paint which rules
+apply where, steer an organism with a gradient field, watch two species share a
+grid.
 
 ## Layout
 
 ```
-nca/
-  model.py       # the CA update rule (PyTorch): perception -> 1x1 MLP ->
-                 # stochastic residual update -> alive masking
-  train.py       # train one letter model (sample pool + damage; exports JSON)
-  train_word.py  # ONE model grows a whole string on one wide grid: one seed
-                 # per letter, a 5-bit letter code in hidden channels 4-8
-  ocr_eval.py    # grow each letter from seed, OCR with tesseract (psm 10)
-  ocr_word.py    # grow a word model, OCR the whole picture as a word (psm 8)
-  make_golden.py # deterministic rollout dump for verifying the JS engine
-  train_all.py   # multi-process orchestrator with per-letter OCR gates
-scripts/
-  ladder.sh        # escalation: singles -> double "GO" -> word "GROW",
-                   # each rung OCR-gated
-  build_report.py  # aggregate OCR reports + weights index for the site
-docs/
-  index.html / style.css / main.js   # the article
-  nca.js                             # browser engine (WebGL2 + CPU fallback)
-  API.md                             # engine <-> page contract
-  test/test_engine.mjs               # node test vs Python golden rollout
-weights/  grown/  ocr/  logs/        # training artifacts (synced into docs/)
+nca/       training modules (the experiments)
+scripts/   queue runners, collection, exports, scoring
+docs/      the static site (gallery, demos, engines)
+queues/    your job lists (gitignored)
 ```
 
-## Model
-
-Distill's architecture, shrunk for CPU training: letters use 12 channels
-(RGB, alpha, 8 hidden), 36 perception features (identity + Sobel x/y),
-64 hidden units — ~2.4k parameters per letter on a 32×32 grid. Word models
-use 16 channels / 80 hidden; seeds are distinguished only by 5 code numbers
-in their initial hidden state, so one rule grows different glyphs.
-
-## Usage
-
-```bash
-.venv/bin/python -m nca.train --char A            # train one letter
-.venv/bin/python -m nca.ocr_eval weights/0041.json  # grow + OCR it
-.venv/bin/python -m nca.train_word --text GO      # whole string, one grid
-.venv/bin/python -m nca.ocr_word weights/word_GO.json
-node docs/test/test_engine.mjs                    # JS engine vs golden
-python3 -m http.server -d docs 8000              # view the article
-```
+Config lives in `fleet.config.json` (gitignored, written by `init.sh`) and
+`docs/config.js` for the web pages; everything falls back to defaults when
+unset.

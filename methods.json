@@ -1,0 +1,128 @@
+[
+    {
+        "id": "m1",
+        "title": "Method 1: 3-Line BB",
+        "dir": "snaps_web_method1/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m1n",
+        "title": "Method 1: 3-Line BB (Noise)",
+        "dir": "snaps_web_method1_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m2",
+        "title": "Method 2: Organic",
+        "dir": "snaps_web_method2/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "m2n",
+        "title": "Method 2: Organic (Noise)",
+        "dir": "snaps_web_method2_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "m4",
+        "title": "Method 4: Proximity",
+        "dir": "snaps_web_method4/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m4n",
+        "title": "Method 4: Proximity (Noise)",
+        "dir": "snaps_web_method4_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m5",
+        "title": "Method 5: Gravity",
+        "dir": "snaps_web_method5/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m5n",
+        "title": "Method 5: Gravity (Noise)",
+        "dir": "snaps_web_method5_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 32,
+        "h_n": 128
+    },
+    {
+        "id": "m9",
+        "title": "9-Line Matrix",
+        "dir": "snaps_9_line/",
+        "desc": "WINNER",
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "m9n",
+        "title": "9-Line Matrix (Noise)",
+        "dir": "snaps_9_line_noise/",
+        "desc": "WINNER",
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "evap",
+        "title": "Evaporating Scaffold",
+        "dir": "snaps_web_evaporate/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "evapn",
+        "title": "Evap Scaffold (Noise)",
+        "dir": "snaps_web_evaporate_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "hid",
+        "title": "Hidden Channel Scaffold",
+        "dir": "snaps_web_hidden/",
+        "desc": "",
+        "seedType": "single",
+        "c_n": 16,
+        "h_n": 80
+    },
+    {
+        "id": "hidn",
+        "title": "Hidden Channel (Noise)",
+        "dir": "snaps_web_hidden_noise/",
+        "desc": "",
+        "seedType": "noise",
+        "c_n": 16,
+        "h_n": 80
+    }
+]
