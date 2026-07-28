@@ -38,6 +38,8 @@ def main(status_only=False):
     if status_only:
         return
     LOCAL.mkdir(parents=True, exist_ok=True)
+    # The remote home is NFS-shared across hosts: one rsync sees every
+    # run. Try hosts in order until one succeeds (fallback if a VM is down).
     for host in hosts:
         try:
             subprocess.run(["rsync", "-az", "--exclude=pid",
@@ -45,6 +47,8 @@ def main(status_only=False):
                            check=True, timeout=600)
         except subprocess.SubprocessError as e:
             print(f"[{host}] rsync failed: {e}")
+            continue
+        break
     client = storage.Client(project=CFG["project"])
     bucket = client.bucket(CFG["bucket"])
     n = 0
