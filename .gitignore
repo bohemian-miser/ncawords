@@ -3,3 +3,11 @@ __pycache__/
 logs/
 snaps/
 *.pyc
+
+# per-clone fleet configuration (written by ./init.sh)
+fleet.config.json
+docs/config.js
+
+# personal job queues (queues/example.txt documents the format)
+queues/*.txt
+!queues/example.txt

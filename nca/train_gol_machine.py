@@ -35,7 +35,9 @@ from PIL import Image
 from nca.train_gol import GoLNet, GLIDER, gol_step
 from nca.runmeta import RunMeta
 
-BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
+from nca.fleetconfig import bucket_url
+
+BUCKET = bucket_url()
 
 _MOORE = torch.tensor([[1., 1, 1], [1, 0, 1], [1, 1, 1]]).view(1, 1, 3, 3)
 

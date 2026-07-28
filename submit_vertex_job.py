@@ -11,15 +11,15 @@ except ImportError:
     print("Please install google-cloud-aiplatform first: pip install google-cloud-aiplatform")
     sys.exit(1)
 
+from nca import fleetconfig  # noqa: E402
+
 # Prefer the dedicated submitter service-account key when present (no daily
 # reauth); harmless no-op if the file is missing or ADC is already set.
-_SA_KEY = os.path.expanduser("~/.config/nca/submitter-key.json")
-if os.path.exists(_SA_KEY):
-    os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS", _SA_KEY)
+_CFG = fleetconfig.setup_credentials()
 
-PROJECT_ID = "recipe-lanes-staging"
+PROJECT_ID = _CFG["project"]
 LOCATION = os.environ.get("VERTEX_LOCATION", "us-central1")
-BUCKET_NAME = "recipe-lanes-nca-jobs"
+BUCKET_NAME = _CFG["bucket"]
 STAGING_BUCKET = f"gs://{BUCKET_NAME}"
 CONTAINER_URI = "us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-1.py310:latest"
 

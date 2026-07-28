@@ -31,7 +31,9 @@ from nca.checkpoint import save_checkpoint, try_resume
 from nca.runmeta import RunMeta, export_run_weights
 from nca.rollout import fester
 
-BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
+from nca.fleetconfig import bucket_url
+
+BUCKET = bucket_url()
 LEVELS = [0.0005, 0.01, 0.02, 0.05, 0.10,
           0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 1.00]
 FESTERS = [10, 50, 100, 200, 500]

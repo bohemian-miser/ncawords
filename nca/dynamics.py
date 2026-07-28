@@ -24,7 +24,9 @@ import torch
 
 from nca.model import NCA
 
-BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
+from nca.fleetconfig import bucket_url
+
+BUCKET = bucket_url()
 
 
 def load_run(run):

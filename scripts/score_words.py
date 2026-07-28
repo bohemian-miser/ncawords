@@ -18,8 +18,13 @@ import urllib.request
 from PIL import Image
 import pytesseract
 
-BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
-API = "https://storage.googleapis.com/storage/v1/b/recipe-lanes-nca-jobs/o"
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from nca import fleetconfig  # noqa: E402
+
+BUCKET = fleetconfig.bucket_url()
+API = fleetconfig.bucket_api()
 
 
 def list_runs(prefix):

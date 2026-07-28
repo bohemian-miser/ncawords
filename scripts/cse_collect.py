@@ -1,39 +1,52 @@
-"""Collect CSE run results and upload to the public bucket.
+"""Collect remote run results and upload to the public bucket.
 
-rsyncs /tmp/z3425319-nca/runs/* from the CSE host to ~/cse_runs/ locally,
-then uploads any file newer than its bucket copy under the same run-dir
-layout the dashboard/gallery already read. Also prints each run's last
-log line and whether its process is still alive.
+rsyncs ~/nca-runs/* from each configured remote host (fleet.config.json
+remote_hosts) into the local runs dir, then uploads any file newer than
+its bucket copy under the same run-dir layout the dashboard/gallery
+already read. Also prints each host's run dirs and file counts.
+
+Hosts that share an NFS home (like a university login-VM fleet) will show
+the same runs; the rsync is idempotent so that is only mildly wasteful.
 
 Usage: python scripts/cse_collect.py [--status-only]
 """
 import argparse
-import os
 import subprocess
+import sys
 from pathlib import Path
 
-os.environ.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
-                      os.path.expanduser("~/.config/nca/submitter-key.json"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from nca import fleetconfig  # noqa: E402
+
+CFG = fleetconfig.setup_credentials()
 from google.cloud import storage  # noqa: E402
 
-LOCAL = Path.home() / "cse_runs"
+LOCAL = Path(CFG["local_runs_dir"])
 BASE = "nca-runs"
 
 
 def main(status_only=False):
-    r = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "cse",
-         f"for d in {BASE}/*/; do echo \"$(basename $d): "
-         f"$(ls $d | wc -l) files\"; done 2>/dev/null"],
-        capture_output=True, text=True, timeout=60)
-    print(r.stdout.strip() or "(no runs on CSE)")
+    hosts = CFG["remote_hosts"]
+    for host in hosts:
+        r = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", host,
+             f"for d in {BASE}/*/; do echo \"$(basename $d): "
+             f"$(ls $d | wc -l) files\"; done 2>/dev/null"],
+            capture_output=True, text=True, timeout=60)
+        print(f"[{host}] " + (r.stdout.strip().replace(
+            "\n", f"\n[{host}] ") if r.stdout.strip() else "(no runs)"))
     if status_only:
         return
-    LOCAL.mkdir(exist_ok=True)
-    subprocess.run(["rsync", "-az", "--exclude=pid",
-                    f"cse:{BASE}/", str(LOCAL) + "/"], check=True, timeout=600)
-    client = storage.Client(project="recipe-lanes-staging")
-    bucket = client.bucket("recipe-lanes-nca-jobs")
+    LOCAL.mkdir(parents=True, exist_ok=True)
+    for host in hosts:
+        try:
+            subprocess.run(["rsync", "-az", "--exclude=pid",
+                            f"{host}:{BASE}/", str(LOCAL) + "/"],
+                           check=True, timeout=600)
+        except subprocess.SubprocessError as e:
+            print(f"[{host}] rsync failed: {e}")
+    client = storage.Client(project=CFG["project"])
+    bucket = client.bucket(CFG["bucket"])
     n = 0
     for run_dir in LOCAL.iterdir():
         if not run_dir.is_dir():

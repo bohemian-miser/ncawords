@@ -41,11 +41,13 @@ async def no_stale_assets(request, call_next):
 # bucket. The bucket is public-read, so the browser loads images directly
 # from PUBLIC_BASE and the server only supplies listings/statuses.
 # ---------------------------------------------------------------------------
-PROJECT_ID = "recipe-lanes-staging"
+from nca.fleetconfig import load as _fleet_load
+_CFG = _fleet_load()
+PROJECT_ID = _CFG["project"]
 VERTEX_LOCATION = "us-central1"
 # Every region with spot-T4 training quota; jobs are spread across them.
 VERTEX_REGIONS = ["us-central1", "us-east1", "us-west1", "europe-west2", "europe-west4"]
-BUCKET_NAME = "recipe-lanes-nca-jobs"
+BUCKET_NAME = _CFG["bucket"]
 PUBLIC_BASE = f"https://storage.googleapis.com/{BUCKET_NAME}/"
 
 _cloud_cache = {"t": 0.0, "runs": {}, "jobs": {}, "weights": []}

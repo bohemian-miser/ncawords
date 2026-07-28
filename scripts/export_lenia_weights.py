@@ -20,10 +20,12 @@ import urllib.request
 import torch
 
 sys.path.insert(0, ".")
+from nca import fleetconfig  # noqa: E402
 from nca.train_lenia import Lenia, sig, KS  # noqa: E402
 
-BUCKET = "https://storage.googleapis.com/recipe-lanes-nca-jobs"
-API = "https://storage.googleapis.com/storage/v1/b/recipe-lanes-nca-jobs/o"
+CFG = fleetconfig.load()
+BUCKET = fleetconfig.bucket_url(CFG)
+API = fleetconfig.bucket_api(CFG)
 
 
 def export(variant, C, K, state_dict):
@@ -117,13 +119,10 @@ def process(run, upload, skip_fresh=False):
         json.dump(out, f)
     print(f"{run}: exported {variant} C={C} K={K} -> {path}")
     if upload:
-        import os
-        os.environ.setdefault(
-            "GOOGLE_APPLICATION_CREDENTIALS",
-            os.path.expanduser("~/.config/nca/submitter-key.json"))
+        fleetconfig.setup_credentials(CFG)
         from google.cloud import storage
-        storage.Client(project="recipe-lanes-staging") \
-            .bucket("recipe-lanes-nca-jobs") \
+        storage.Client(project=CFG["project"]) \
+            .bucket(CFG["bucket"]) \
             .blob(f"{run}/weights.json").upload_from_filename(path)
         print(f"{run}: uploaded")
 
@@ -138,8 +137,7 @@ if __name__ == "__main__":
         runs = []
         for pref in ("lenia-", "cw-", "p2-"):
             with urllib.request.urlopen(
-                    "https://storage.googleapis.com/storage/v1/b/"
-                    f"recipe-lanes-nca-jobs/o?prefix={pref}&delimiter=/"
+                    f"{API}?prefix={pref}&delimiter=/"
                     "&fields=prefixes&maxResults=1000") as r:
                 runs += [x.rstrip("/") for x in json.load(r).get("prefixes", [])]
         for run in runs:

@@ -1,5 +1,0 @@
-og32-3line-r0 nca.train_ladder_seed --text=COMP --steps=20000 --log-every=500 --normal-p=1.0 --damage-occasional --channel-n=32 --hidden-n=192 --scaffold=3line --rng-seed=0
-ns-sharedk-r1 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=6 --rng-seed=1
-ns-full12-r1 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=full --channels=12 --rng-seed=1
-ns-sharedk12-init-r0 nca.train_lenia --target=word:COMP --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=12 --train-init --rng-seed=0
-og32-plain-r0 nca.train_ladder_seed --text=COMP --steps=20000 --log-every=500 --normal-p=1.0 --damage-occasional --channel-n=32 --hidden-n=192 --rng-seed=0

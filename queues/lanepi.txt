@@ -1,1 +1,0 @@
-nf2-fan3 nca.train_noisefester --mix --phase-len=250 --log-every=500 --source=cls-fan3-r1 --scaffold=fan3 --channel-n=16 --hidden-n=128

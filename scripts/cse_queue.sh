@@ -1,14 +1,21 @@
 #!/bin/bash
-# Sequential CSE job queue (one lane). Feed it a queue file where each
+# Sequential remote job queue (one lane). Feed it a queue file where each
 # line is: <job-name> <python-module> <args...>
-# Runs each job to completion in a Pi-held SSH session (retry+resume on
-# drops via checkpoints in the CSE NFS home), then collects, uploads to
-# the bucket, and removes the remote run dir (2.4GB home quota).
-# Run two lanes max — the login VM has 2 shared cores and we nice -n 19.
+#   scripts/cse_queue.sh <queue-file> [host]
+# [host] defaults to the first remote_hosts entry in fleet.config.json.
+# Runs each job to completion in a locally-held SSH session (retry+resume
+# on drops via checkpoints in the remote home), then collects, uploads to
+# the bucket, and removes the remote run dir (remote homes have small
+# quotas). Keep lane count modest — remote login VMs share cores and we
+# nice -n 19.
 set -uo pipefail
 QUEUE=$1
-HOST="${2:-cse}"
+HOST="${2:-}"
 cd "$(dirname "$0")/.."
+if [ -z "$HOST" ]; then
+  HOST=$(python3 -c "import sys; sys.path.insert(0, '.'); \
+from nca import fleetconfig; print(fleetconfig.load()['remote_hosts'][0])")
+fi
 
 # Ship the source tree and run via PYTHONPATH — pip installs into the
 # shared NFS venv race between lanes and silently keep stale files.

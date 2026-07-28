@@ -1,0 +1,8 @@
+# Queue file format: one job per line —
+#   <run-name> <python-module> <args...>
+# Lines starting with # (and blank lines) are skipped. Run a lane with:
+#   scripts/remote_queue.sh queues/mylane.txt [host]   # remote worker
+#   scripts/local_queue.sh  queues/mylane.txt          # this machine
+# Sample jobs (uncomment to use):
+#lenia-word-demo nca.train_lenia --target=word:GROW --word-full --size=96 --word-scale=1.4 --steps=20000 --log-every=500 --variant=sharedk --channels=6 --rng-seed=0
+#emoji-smiley-demo nca.train_emoji_vanilla --emoji 1f642 --steps 8000 --log-every 200
