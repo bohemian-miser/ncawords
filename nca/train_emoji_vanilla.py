@@ -122,7 +122,7 @@ def train(emoji="1f642", label=None, steps=8000, channel_n=16, hidden_n=96,
                         .resize((w * 6, h * 6), Image.NEAREST) \
                         .save(Path(snap_dir) / f"{tag}_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
-                meta.log(step, loss.item())
+                meta.log(step, loss.item(), ca_steps=n_ca)
                 export_run_weights(model, snap_dir, label.upper(), 12,
                                    grid_w=w, grid_h=h)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):

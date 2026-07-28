@@ -664,7 +664,8 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                 extra_log = {"word_stage": stages[stage]} if is_word else {}
                 if hole_mask is not None:
                     extra_log["hole_mse"] = round(hole_mse, 4)
-                meta.log(step, loss.item(), loss_rel=round(rel, 4), **extra_log)
+                meta.log(step, loss.item(), loss_rel=round(rel, 4),
+                         ca_steps=T, **extra_log)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):
             save_checkpoint(snap_dir, step, model, opt, sched,
                             extra={"stage": stage, "stage_start": stage_start}

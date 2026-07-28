@@ -203,7 +203,7 @@ def train(text="COMP", steps=12000, glyph=12, channel_n=16, hidden_n=128,
                     .resize((w * 8, h * 8), Image.NEAREST) \
                     .save(Path(snap_dir) / f"CLOUD_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
-                meta.log(step, loss.item())
+                meta.log(step, loss.item(), ca_steps=n_ca)
                 export_run_weights(model, snap_dir, text, glyph,
                                    grid_w=w + 20, grid_h=h + 10)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):

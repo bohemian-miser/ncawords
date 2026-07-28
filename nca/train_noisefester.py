@@ -208,7 +208,7 @@ def train(source="cls-fan3-r1", text="COMP", scaffold="fan3", mix=False,
                         .save(Path(snap_dir) / f"{tag}_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
                 meta.log(step, loss.item(), phase=name,
-                         noise=noise_a, fester_n=fest_n)
+                         noise=noise_a, fester_n=fest_n, ca_steps=n_ca)
                 export_run_weights(model, snap_dir, text, 12,
                                    grid_w=w + 20, grid_h=h + 10)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):

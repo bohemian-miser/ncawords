@@ -12,6 +12,8 @@ cd "$(dirname "$0")/.."
 
 # Ship the source tree and run via PYTHONPATH — pip installs into the
 # shared NFS venv race between lanes and silently keep stale files.
+CODE_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+tar czf /tmp/nca-code-$CODE_SHA.tgz nca/ 2>/dev/null
 ssh -n -o BatchMode=yes "$HOST" "mkdir -p ~/nca-src/nca"
 rsync -az --delete nca/ "$HOST":nca-src/nca/
 
@@ -24,9 +26,10 @@ for line in "${QLINES[@]}"; do
   ARGS=$(echo "$line" | cut -d' ' -f3-)
   echo "[queue] ==== $NAME ===="
   ssh -n -o BatchMode=yes "$HOST" "mkdir -p nca-runs/$NAME"
+  scp -q /tmp/nca-code-$CODE_SHA.tgz "$HOST":nca-runs/$NAME/code.tgz 2>/dev/null || true
   for attempt in $(seq 1 200); do
     ssh -n -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=4 "$HOST" \
-      "cd ~ && PYTHONPATH=\$HOME/nca-src nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
+      "cd ~ && NCA_CODE_SHA=$CODE_SHA PYTHONPATH=\$HOME/nca-src nice -n 19 ./nca-venv/bin/python -m $MODULE $ARGS --snap-dir=\$HOME/nca-runs/$NAME" \
       && break
     echo "[queue] $NAME dropped (attempt $attempt); resuming in 60s"
     sleep 60

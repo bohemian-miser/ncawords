@@ -7,6 +7,8 @@ set -uo pipefail
 QUEUE=$1
 cd "$(dirname "$0")/.."
 
+CODE_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+export NCA_CODE_SHA=$CODE_SHA
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   case "$line" in \#*) continue;; esac
@@ -15,6 +17,7 @@ while IFS= read -r line; do
   ARGS=$(echo "$line" | cut -d' ' -f3-)
   echo "[pi-lane] ==== $NAME ===="
   mkdir -p "$HOME/cse_runs/$NAME"
+  tar czf "$HOME/cse_runs/$NAME/code.tgz" nca/ 2>/dev/null || true
   nice -n 15 .venv/bin/python -m $MODULE $ARGS --snap-dir="$HOME/cse_runs/$NAME" \
     || echo "[pi-lane] $NAME exited nonzero"
 done < "$QUEUE"

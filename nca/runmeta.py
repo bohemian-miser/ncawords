@@ -18,12 +18,18 @@ from nca.train import export_weights
 
 class RunMeta:
     def __init__(self, snap_dir, text, module, args, channel_n, hidden_n,
-                 seed_type, steps_total, device, tags=None):
+                 seed_type, steps_total, device, tags=None, source_run=None):
+        import os
         self.path = Path(snap_dir) / "run.json" if snap_dir else None
         self.d = {
             "text": text,
             "module": module,
             "args": args,
+            # provenance: git SHA of the shipped code (runners export it) and
+            # the parent run when this continues an earlier model — together
+            # they make any result recreatable from the bucket alone
+            "code_sha": os.environ.get("NCA_CODE_SHA"),
+            "source_run": source_run or (args or {}).get("source"),
             "channel_n": channel_n,
             "hidden_n": hidden_n,
             "seed_type": seed_type,
@@ -33,6 +39,7 @@ class RunMeta:
             "updated_at": None,
             "step": -1,
             "losses": [],
+            "history": [],
             "tags": tags or [],
         }
         # A preempted-and-resumed job should extend the history, not clobber it.
@@ -41,6 +48,7 @@ class RunMeta:
                 prev = json.loads(self.path.read_text())
                 self.d["started_at"] = prev.get("started_at", self.d["started_at"])
                 self.d["losses"] = prev.get("losses", [])
+                self.d["history"] = prev.get("history", [])
             except Exception:
                 pass
         self._write()
@@ -49,7 +57,13 @@ class RunMeta:
         self.d["step"] = step
         self.d["losses"].append([step, round(float(loss), 6)])
         self.d["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # kwargs used to be flattened to top level and clobbered each call;
+        # keep the latest there for cheap reads AND append to history so
+        # per-interval data (phase, rollout length, aux metrics) persists
         self.d.update(extra)
+        if extra:
+            self.d["history"].append({"step": step,
+                                      "loss": round(float(loss), 6), **extra})
         self._write()
 
     def _write(self):

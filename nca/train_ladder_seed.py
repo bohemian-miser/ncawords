@@ -160,7 +160,8 @@ def train(text, steps=8000, glyph=12, channel_n=16, hidden_n=80,
                         .resize((w * 8, h * 8), Image.NEAREST) \
                         .save(Path(snap_dir) / f"{tag}_{s}.png")
                 torch.save(model.state_dict(), str(Path(snap_dir) / "latest.pth"))
-                meta.log(step, loss.item(), noise_idx=noise_idx)
+                meta.log(step, loss.item(), noise_idx=noise_idx,
+                         ca_steps=('adaptive' if adaptive else n_ca))
                 export_run_weights(model, snap_dir, text, glyph)
         if snap_dir and (step % ckpt_every == 0 or step == steps - 1):
             save_checkpoint(snap_dir, step, model, opt, sched)
