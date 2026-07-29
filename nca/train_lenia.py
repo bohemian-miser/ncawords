@@ -35,7 +35,7 @@ from nca.runmeta import RunMeta
 from nca.checkpoint import save_checkpoint, try_resume
 
 KS = 15          # kernel support (odd); rings live inside radius KS//2
-RINGS = 3        # bumps per kernel
+RINGS = 3        # bumps per kernel (raise via --rings for richer kernels)
 
 
 def sig(x, lo, hi):
@@ -392,10 +392,46 @@ def export_web_weights(model, variant, C, K, size, init_kind="noise",
     return out
 
 
+
+def corrupt_lenia(x, model, step, steps, damage_p, noise_p, fester_p,
+                  fester_max, anneal, device):
+    """Damage + noise + long fester for Lenia training.
+
+    The Lenia trainer had none of this: it only ever saw clean starts, so
+    it never learned to climb out of bad states. Severity ramps with
+    training, matching the NCA noisefester recipe.
+    """
+    B, C, H, W = x.shape
+    frac = min(1.0, step / max(1, steps * 0.6))
+    if noise_p > 0 and torch.rand(1).item() < noise_p:
+        a = (torch.rand(B, 1, 1, 1, device=device) ** 1.5) * (0.1 + 0.9 * frac)
+        pure = (torch.rand(B, 1, 1, 1, device=device) < 0.1).float()
+        a = torch.maximum(a, pure)
+        x = (1 - a) * x + a * torch.rand_like(x)
+    if damage_p > 0 and torch.rand(1).item() < damage_p:
+        nmax = 1 + int(5 * frac)
+        for b in range(B):
+            if torch.rand(1).item() < 0.7:
+                for _ in range(int(torch.randint(1, nmax + 1, (1,)))):
+                    bh = int(torch.randint(4, max(5, H // 2), (1,)))
+                    bw = int(torch.randint(4, max(5, W // 2), (1,)))
+                    y0 = int(torch.randint(0, max(1, H - bh), (1,)))
+                    x0 = int(torch.randint(0, max(1, W - bw), (1,)))
+                    x[b, :, y0:y0 + bh, x0:x0 + bw] = 0.0
+    if fester_p > 0 and torch.rand(1).item() < fester_p:
+        n = int(20 + torch.rand(1).item() * (fester_max - 20) * (0.3 + 0.7 * frac))
+        with torch.no_grad():
+            for _ in range(n):
+                x = model.step(x, anneal)
+        x = x.detach()
+    return x
+
+
 # ---------------------------------------------------------------- training
 
 def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
-          size=64, lr=5e-3, t_min=16, t_max=48, word_full=False, grok=False,
+          size=64, lr=5e-3, t_min=16, t_max=48, hidden=24,
+          damage_p=0.0, noise_p=0.0, fester_p=0.0, fester_max=400, word_full=False, grok=False,
           cond="none", train_init=False, word_scale=1.0, scaf_strength=0.5,
           scaf_holes=0, scaf_noise=0.0, scaf_persistent=False,
           scaf_ablate=0.0,
@@ -412,7 +448,7 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         C = 1
     torch.manual_seed(400 + rng_seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = Lenia(variant, C=C, K=K).to(device)
+    model = Lenia(variant, C=C, K=K, hidden=hidden).to(device)
     n_par = sum(p.numel() for p in model.parameters())
     print(f"Device {device}, {variant} C={C} K={K}, {n_par} physics params")
 
@@ -500,7 +536,10 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
                     "rng_seed": rng_seed, "params": n_par, "cond": cond,
                     "train_init": train_init, "word_scale": word_scale,
                     "scaf_strength": scaf_strength, "scaf_holes": scaf_holes,
-                    "scaf_noise": scaf_noise,
+                    "scaf_noise": scaf_noise, "hidden": hidden,
+                    "t_min": t_min, "t_max": t_max,
+                    "damage_p": damage_p, "noise_p": noise_p,
+                    "fester_p": fester_p, "fester_max": fester_max,
                     "scaf_persistent": scaf_persistent,
                     "scaf_ablate": scaf_ablate,
                     "size": size, "grok": grok},
@@ -522,6 +561,9 @@ def train(variant="static1", target="dots", C=1, K=3, steps=6000, batch=8,
         hi = t_min + int((t_max - t_min) * min(1.0, step / (steps * 0.5)))
         T = int(torch.randint(t_min, hi + 1, (1,)))
         x = make_init(tgt)
+        if damage_p or noise_p or fester_p:
+            x = corrupt_lenia(x, model, step, steps, damage_p, noise_p,
+                              fester_p, fester_max, anneal, device)
         # Anti-amplifier scaffold corruptions (the interrogation of phase 1
         # showed a noiseless every-step clamp admits a trivial pointwise
         # amplifier — these force actual development):
@@ -703,13 +745,25 @@ if __name__ == "__main__":
     p.add_argument("--scaf-t0", action="store_true",
                    help="deprecated no-op: t0-only is now the default")
     p.add_argument("--size", type=int, default=64)
+    p.add_argument("--t-min", type=int, default=16)
+    p.add_argument("--t-max", type=int, default=48)
+    p.add_argument("--hidden", type=int, default=24)
+    p.add_argument("--rings", type=int, default=3)
+    p.add_argument("--damage-p", type=float, default=0.0)
+    p.add_argument("--noise-p", type=float, default=0.0)
+    p.add_argument("--fester-p", type=float, default=0.0)
+    p.add_argument("--fester-max", type=int, default=400)
     p.add_argument("--grok", action="store_true",
                    help="AdamW + weight decay + constant LR for grokking runs")
     p.add_argument("--rng-seed", type=int, default=0)
     p.add_argument("--log-every", type=int, default=150)
     p.add_argument("--snap-dir", default=None)
     a = p.parse_args()
+    globals()['RINGS'] = a.rings
     train(variant=a.variant, target=a.target, C=a.channels, K=a.kernels,
+          t_min=a.t_min, t_max=a.t_max, hidden=a.hidden,
+          damage_p=a.damage_p, noise_p=a.noise_p,
+          fester_p=a.fester_p, fester_max=a.fester_max,
           steps=a.steps, word_full=a.word_full, grok=a.grok, cond=a.cond,
           train_init=a.train_init, word_scale=a.word_scale, size=a.size,
           scaf_strength=a.scaf_strength, scaf_holes=a.scaf_holes,
