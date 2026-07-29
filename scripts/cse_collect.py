@@ -27,14 +27,20 @@ BASE = "nca-runs"
 
 def main(status_only=False):
     hosts = CFG["remote_hosts"]
+    # The remote home is NFS-shared, so one host's listing covers the fleet;
+    # printing every host repeated the same runs and hid which files the
+    # rsync below actually pulled.
     for host in hosts:
         r = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", host,
              f"for d in {BASE}/*/; do echo \"$(basename $d): "
              f"$(ls $d | wc -l) files\"; done 2>/dev/null"],
             capture_output=True, text=True, timeout=60)
-        print(f"[{host}] " + (r.stdout.strip().replace(
-            "\n", f"\n[{host}] ") if r.stdout.strip() else "(no runs)"))
+        if r.stdout.strip():
+            print(r.stdout.strip())
+            break
+    else:
+        print("(no runs reachable)")
     if status_only:
         return
     LOCAL.mkdir(parents=True, exist_ok=True)
