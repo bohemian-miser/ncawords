@@ -17,6 +17,7 @@
 
 import { LeniaCA } from './lenia_engine.js?v=nostencil';
 import { createCA } from './nca.js';
+import { initFiddle, openFiddleModal, handleFiddleHash } from './fiddle.js?v=lenia-17';
 
 let methods = [];
 let cardTrackers = [];
@@ -27,6 +28,21 @@ const container = document.getElementById('cards-container');
 // an optional config.js (gitignored) that sets window.NCA_CONFIG.bucket.
 const BUCKET = (window.NCA_CONFIG && window.NCA_CONFIG.bucket) || 'recipe-lanes-nca-jobs';
 const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
+
+// The "Fiddle" feature (fiddle.js) edits a run's exported weights live and
+// shares the result as a '#fiddle=<token>' URL. It owns its own modal, so
+// all it needs from here are live lookups into the gallery's state — the
+// closures below keep reading the same arrays as they fill in.
+initFiddle({
+    getMethod: id => methods.find(x => x.id === id),
+    getTracker: id => cardTrackers.find(t => t.id === id),
+    bucketBase: BUCKET_BASE,
+    // Its overlay hides the whole gallery and runs its own engine, so the
+    // card that was ticking behind it stops for the modal's lifetime.
+    pauseLive: pauseLiveForModal,
+    resumeLive: resumeLiveAfterModal
+});
+
 // Top-level bucket prefixes that are not run directories.
 const EXCLUDE_PREFIXES = ['packages/', 'analysis/', 'weights/', 'docs/'];
 const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
@@ -522,6 +538,7 @@ function buildCard(m) {
         <h3>
             <span class="lenia-card-title" id="title_${m.id}" title="Click for run details">${m.title}</span>
             <button class="info-btn" id="info_${m.id}" title="Run details">&#9432;</button>
+            <button class="fiddle-btn" id="fiddle_${m.id}" title="Fiddle with this run's trained weights">Fiddle</button>
         </h3>
         <div class="run-desc" id="subtitle_${m.id}">Loading run.json…</div>
         <div class="img-container" style="height:220px;">
@@ -610,6 +627,7 @@ function buildCard(m) {
         sparkLabelObj: card.querySelector(`#spark_label_${esc}`),
         titleObj: card.querySelector(`#title_${esc}`),
         infoBtn: card.querySelector(`#info_${esc}`),
+        fiddleBtn: card.querySelector(`#fiddle_${esc}`),
         deprecatedBadgeObj: card.querySelector(`#deprecated_${esc}`),
         // --- live physics widget state ---
         liveToggleBtn: card.querySelector(`#livetoggle_${esc}`),
@@ -629,6 +647,7 @@ function buildCard(m) {
     tr.scrubObj.oninput = (e) => window.scrubTo(m.id, e.target.value);
     tr.titleObj.onclick = () => openLeniaModal(m.id);
     tr.infoBtn.onclick = () => openLeniaModal(m.id);
+    tr.fiddleBtn.onclick = () => openFiddleModal(m.id);
     drawSparkline(tr, m);
 
     tr.liveCtx = tr.liveCanvas.getContext('2d');
@@ -1136,9 +1155,39 @@ function runLiveLoop(tr) {
     tr.liveStepAccum += parseFloat(tr.liveSpeedObj?.value || '1');
     const steps = Math.floor(tr.liveStepAccum);
     tr.liveStepAccum -= steps;
-    for (let i = 0; i < steps; i++) tr.liveCA.step();
+    try {
+        for (let i = 0; i < steps; i++) tr.liveCA.step();
+    } catch (e) {
+        // A widget whose engine died (e.g. a lost WebGL context) degrades to
+        // a stopped card instead of killing the loop with no explanation.
+        console.error('lenia: live step failed', e);
+        stopLiveLoop(tr);
+        tr.livePaused = true;
+        tr.liveStatusObj.innerText = 'simulation stopped — ' + e.message;
+        return;
+    }
     if (steps > 0) drawLive(tr);
     tr.liveTimer = setTimeout(() => runLiveLoop(tr), 30);
+}
+
+// The fiddle modal covers the gallery completely and steps its own engine;
+// only one simulation should be running, so the ticking card pauses for as
+// long as that modal is open and resumes exactly where it left off.
+let fiddlePausedTr = null;
+
+function pauseLiveForModal() {
+    if (!currentLiveTr || currentLiveTr.livePaused || !currentLiveTr.liveTimer) return;
+    fiddlePausedTr = currentLiveTr;
+    stopLiveLoop(fiddlePausedTr);
+}
+
+function resumeLiveAfterModal() {
+    const tr = fiddlePausedTr;
+    fiddlePausedTr = null;
+    // Not if the user collapsed/paused/switched cards while the modal was up.
+    if (!tr || tr !== currentLiveTr || tr.livePaused || !tr.liveCA) return;
+    if (tr.livePlayBtn) tr.livePlayBtn.innerText = '⏸';
+    runLiveLoop(tr);
 }
 
 async function activateOrCollapseLive(tr) {
@@ -1342,6 +1391,9 @@ async function bootstrap() {
     const sortSel = document.getElementById('sort-select');
     if (sortSel) sortSel.value = sortKey;
     await listLeniaRuns(runs => addOrUpdateCards(leniaMethodsFrom(runs)));
+    // A '#fiddle=<token>' URL reopens someone's edited weights; the cards
+    // exist by now, so fiddle.js can resolve the run it names.
+    handleFiddleHash().catch(err => console.error('fiddle hash failed', err));
     // The unified gallery lists every run dir in the bucket (hundreds of
     // per-run listings per sweep), so poll less aggressively than the old
     // prefix-scoped gallery did.
