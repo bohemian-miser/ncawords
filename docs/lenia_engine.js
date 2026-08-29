@@ -24,6 +24,23 @@ export class LeniaCA {
     this.resetTrained();
   }
 
+  // Hot-swap the trained parameters while KEEPING the current grid state
+  // (the gallery's live-fiddle path). The state buffer is shaped by C and
+  // the grid size only, so any same-C weights — kernels, growth params,
+  // coupling, dt/leak, ks, even the variant — take effect on the next
+  // step(); a changed C needs a rebuild. Returns false when incompatible.
+  setWeights(w) {
+    if (w.C !== this.C || (w.size ?? 64) !== this.width) return false;
+    this.w = w;
+    this.K = w.K; this.ks = w.ks; this.dt = w.dt;
+    this.leak = w.leak ?? 0.05;
+    this._kern = w.kernels ? w.kernels.map(k => Float32Array.from(k.flat())) : undefined;
+    this._basis = w.basis ? w.basis.map(k => Float32Array.from(k.flat())) : undefined;
+    this._ub = null;   // dyn scratch is sized by the basis count
+    this._g = null;    // sharedk scratch — cheap to drop, safe to rebuild
+    return true;
+  }
+
   // start the way training started (exporter records the recipe)
   resetTrained() {
     if (this.w.init === "seedblob") this.resetSeed();

@@ -17,7 +17,7 @@
 
 import { LeniaCA } from './lenia_engine.js?v=nostencil';
 import { createCA } from './nca.js';
-import { initFiddle, openFiddleModal, handleFiddleHash } from './fiddle.js?v=lenia-17';
+import { initFiddle, openFiddleModal, handleFiddleHash } from './fiddle.js?v=lenia-18';
 
 let methods = [];
 let cardTrackers = [];
