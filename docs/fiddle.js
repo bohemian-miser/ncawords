@@ -468,6 +468,11 @@ let clipboard = null;   // { sourceRun, path, value }
 
 let ui = null;          // built-once modal DOM references
 let session = null;     // per-open state (run, weights, engine, timers)
+// Whether the tree names the axes of the learned matrices (see the semantic
+// views below). Read lazily so importing this module touches no browser API.
+let grouping = (() => {
+    try { return localStorage.getItem('fiddle_group') !== '0'; } catch (e) { return true; }
+})();
 let hashListenerInstalled = false;
 let selfSetToken = null;   // hash we wrote ourselves; ignore its hashchange
 
@@ -515,8 +520,6 @@ const FIDDLE_CSS = `
 .fd-btn:hover { background:#555; }
 .fd-btn.primary { background:#2d6a4f; }
 .fd-btn.primary:hover { background:#37835f; }
-.fd-btn.hot { background:#a8621b; box-shadow:0 0 0 1px #ffb454 inset; }
-.fd-btn.hot:hover { background:#c1731f; }
 #fd-savebox { display:none; margin-top:10px; padding:10px; background:#161616; border:1px solid #333;
   border-radius:4px; font-size:0.78em; word-break:break-all; }
 #fd-savebox a { color:#4db8ff; }
@@ -559,6 +562,11 @@ const FIDDLE_CSS = `
   font-size:0.85em; padding:0 5px; cursor:pointer; font-family:inherit; }
 .fd-tool:hover { color:#4db8ff; border-color:#4db8ff; }
 .fd-more { color:#ffb454; padding:2px 0; }
+.fd-view-key { color:#c9a0ff; }
+.fd-role { color:#7fbf7f; }
+#fd-tree-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  font-size:0.78em; color:#888; margin-top:6px; }
+#fd-tree-head label { cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
 .fd-dialog { position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:1200;
   display:flex; align-items:center; justify-content:center; }
 .fd-dialog-box { background:#1e1e1e; border:1px solid #444; border-radius:8px; padding:18px;
@@ -591,7 +599,7 @@ function buildModal() {
         <div id="fd-sub"></div>
         <div id="fd-flags">
           <span id="fd-badge">fiddled — loaded from URL</span>
-          <span id="fd-dirty">edited — press APPLY to rebuild the preview</span>
+          <span id="fd-dirty">edited — applying…</span>
         </div>
         <div class="fd-toolbar">
           <button class="fd-btn" id="fd-copy-all" title="Copy the whole weights object to the fiddle clipboard">Copy all</button>
@@ -615,7 +623,7 @@ function buildModal() {
               <label>speed <input type="range" id="fd-speed" min="0.1" max="10" step="0.1" value="1" style="width:70px;vertical-align:middle;"></label>
             </div>
             <div class="fd-ctl">
-              <button class="fd-btn" id="fd-apply" title="Rebuild the engine from the edited weights">APPLY</button>
+              <button class="fd-btn" id="fd-apply" title="Rebuild the engine from scratch — edits already apply live, this also resets the grid">Rebuild</button>
               <button class="fd-btn" id="fd-revert" title="Restore the trained weights">RESET</button>
             </div>
             <div id="fd-live-status"></div>
@@ -623,6 +631,11 @@ function buildModal() {
         </div>
 
         <h4>Structure — weights.json</h4>
+        <div id="fd-tree-head">
+          <label title="Name the axes of the learned matrices: an NCA's fc0_w columns split into state / sobel x / sobel y per channel, fc1_w rows into output channels, a Lenia kernel bank into source→target pairs">
+            <input type="checkbox" id="fd-group" checked> group weights by role
+          </label>
+        </div>
         <div id="fd-tree-msg"></div>
         <div class="fd-tree" id="fd-tree"></div>
       </div>
@@ -648,7 +661,14 @@ function buildModal() {
         noiseBtn: $('fd-noise'),
         clearBtn: $('fd-clear'),
         treeMsg: $('fd-tree-msg'),
+        groupChk: $('fd-group'),
         tree: $('fd-tree')
+    };
+    ui.groupChk.checked = grouping;
+    ui.groupChk.onchange = () => {
+        grouping = ui.groupChk.checked;
+        try { localStorage.setItem('fiddle_group', grouping ? '1' : '0'); } catch (e) { /* private mode */ }
+        renderTree();
     };
     ui.canvasCtx = ui.canvas.getContext('2d');
 
@@ -700,17 +720,72 @@ function markDirty() {
         // Not '' — the stylesheet's own `#fd-dirty { display:none }` is what
         // an empty inline value falls back to, which would hide it forever.
         ui.dirty.style.display = 'inline-block';
-        ui.applyBtn.classList.add('hot');
+        ui.dirty.innerText = 'edited — applying…';
         ui.saveBox.style.display = 'none';   // any shown URL is now stale
     }
+    scheduleLiveApply();
 }
 
 function clearDirty() {
     if (session) session.dirty = false;
-    if (ui) {
-        ui.dirty.style.display = 'none';
-        ui.applyBtn.classList.remove('hot');
+    if (ui) ui.dirty.style.display = 'none';
+}
+
+// ---- live apply ------------------------------------------------------
+//
+// Edits reach the running simulation on their own: the point of fiddling is
+// watching the SAME grown pattern react to a changed rule, so a weight edit
+// swaps the engine's parameters in place and never resets the grid. Only an
+// edit the engine is allocated around (channel count, grid size, a Lenia
+// grid) forces the rebuild that does reset it.
+
+const LIVE_APPLY_DELAY = 160;   // ms of quiet before the swap — inputs fire per keystroke
+
+function scheduleLiveApply() {
+    if (!session) return;
+    const s = session;
+    if (s.applyTimer) clearTimeout(s.applyTimer);
+    s.applyTimer = setTimeout(() => {
+        s.applyTimer = null;
+        if (session === s) liveApply();
+    }, LIVE_APPLY_DELAY);
+}
+
+function liveApply() {
+    if (!ui || !session || !session.fiddled) return;
+    const w = session.fiddled;
+    if (!session.ca) { rebuildEngine({ keepPaused: false }); return; }
+
+    // Same bound the rebuild path enforces: a hand-typed ks or grid can make
+    // one step() effectively never return, and setWeights would install it.
+    const rangeErr = weightsOutOfRange(w);
+    if (rangeErr) {
+        ui.dirty.innerText = 'edited — not applied';
+        liveStatus('not applied — ' + rangeErr);
+        return;
     }
+
+    let swapped = false;
+    try {
+        swapped = !!(session.ca.setWeights && session.ca.setWeights(w));
+    } catch (e) {
+        // A throw part-way through a swap leaves the engine inconsistent
+        // (half the new matrices, half the old), so rebuild rather than step.
+        console.error('fiddle: live weight swap failed', e);
+        rebuildEngine({ keepPaused: false });
+        return;
+    }
+    if (!swapped) {
+        // Structural change — the engine is sized around what changed. Leave
+        // a failed rebuild's own diagnosis in place rather than papering over
+        // it with the cheerier "rebuilt" line.
+        rebuildEngine({ keepPaused: false });
+        if (session && session.ca) liveStatus('structure changed — engine rebuilt, grid reset');
+        return;
+    }
+    clearDirty();
+    if (session.paused) drawPreview();
+    liveStatus(`applied live (${session.engine}) — grid kept, physics updated`);
 }
 
 function liveStatus(text) {
@@ -757,6 +832,7 @@ function setPreviewControls(enabled) {
 function closeFiddleModal() {
     stopLoop();
     if (session) {
+        if (session.applyTimer) { clearTimeout(session.applyTimer); session.applyTimer = null; }
         // Drop the engine: GLCA holds GPU textures, LeniaCA holds big typed
         // arrays, and neither should survive a closed modal.
         disposeEngine();
@@ -818,7 +894,7 @@ async function openSession(id, preload) {
         // nothing may be diffed against it.
         pristineIsReal: true,
         ca: null, engine: null, imgData: null,
-        paused: false, accum: 0, timer: null,
+        paused: false, accum: 0, timer: null, applyTimer: null,
         dirty: false, fromUrl: !!(preload && preload.fromUrl)
     };
 
@@ -954,27 +1030,163 @@ function renderInfo() {
     if (target) target.onerror = function () { this.style.display = 'none'; };
 }
 
+// ---- semantic weight views -------------------------------------------
+//
+// weights.json stores the learned parameters as flat matrices whose axes only
+// mean something once you know the update rule. These views name those axes.
+// Every editable leaf still writes straight through to its real path, so the
+// grouping is presentation only — never a second copy of the data:
+//
+//   NCA (nca.js): fc0_w is [hidden_n][3*channel_n], its columns being the
+//   perception vector [state | sobel x | sobel y] over every channel, in an
+//   order the 'layout' field pins down; fc1_w is [channel_n][hidden_n], one
+//   row per output channel.
+//   Lenia (lenia_engine.js): the 'full' variant indexes its kernel bank
+//   (src*C + tgt)*K + k, with mu/sg/h sharing that flat order, and 'sharedk'
+//   couples channels through H[src][tgt].
+
+const PERCEPTION_BLOCKS = ['state (identity)', 'sobel x', 'sobel y'];
+const FULL_BANKS = ['kernels', 'mu', 'sg', 'h'];
+
+// Column of fc0_w holding `block` of channel `c`. model.py's grouped conv
+// emits [id0, sx0, sy0, id1, …]; a 'blocked' export has already reordered
+// those into three contiguous per-channel runs.
+export function perceptionColumn(w, block, c, C) {
+    return w.layout === 'blocked' ? block * C + c : 3 * c + block;
+}
+
+// Channel semantics from model.py: 0..2 are RGB, 3 is the alpha (aliveness)
+// channel, code_ch0..+code_bits carry a word model's per-letter code, and
+// everything above that is free hidden state.
+export function channelLabel(w, c) {
+    const named = ['R', 'G', 'B', 'alpha'];
+    if (c < named.length) return `ch ${c} · ${named[c]}`;
+    const c0 = w.code_ch0, nb = w.code_bits;
+    if (Number.isInteger(c0) && Number.isInteger(nb) && nb > 0 && c >= c0 && c < c0 + nb) {
+        return `ch ${c} · code bit ${c - c0}`;
+    }
+    return `ch ${c} · hidden`;
+}
+
+function isNcaWeights(w) {
+    return !!w && w.kind !== 'lenia' && Array.isArray(w.fc0_w)
+        && Number.isInteger(w.channel_n) && Number.isInteger(w.hidden_n);
+}
+
+// Every fc0_w cell of one perception block, optionally narrowed to one hidden
+// unit — what [scale] multiplies when you scale a whole block.
+function fc0Paths(w, block, C, HN, onlyK) {
+    const out = [];
+    for (let k = 0; k < HN; k++) {
+        if (onlyK !== undefined && k !== onlyK) continue;
+        for (let c = 0; c < C; c++) {
+            out.push(['fc0_w', String(k), String(perceptionColumn(w, block, c, C))]);
+        }
+    }
+    return out;
+}
+
+// Flat 'full'-variant bank entries for one source channel, optionally
+// narrowed to one target channel.
+function fullBankPaths(segs, C, K, src, onlyTgt) {
+    const out = [];
+    for (let tgt = 0; tgt < C; tgt++) {
+        if (onlyTgt !== undefined && tgt !== onlyTgt) continue;
+        for (let k = 0; k < K; k++) out.push(segs.concat(String((src * C + tgt) * K + k)));
+    }
+    return out;
+}
+
+// The view rows for one node, or null to fall back to raw keys. A spec with
+// `children` is a view node: it has no value of its own, so it offers only
+// [scale] (over `leafPaths`) rather than the copy/paste/json tools that need
+// a real path.
+function viewChildren(segs) {
+    if (!grouping || !session) return null;
+    const w = session.fiddled;
+    if (!w || typeof w !== 'object') return null;
+    const key = segs[0];
+
+    if (segs.length === 1 && isNcaWeights(w)) {
+        const C = w.channel_n, HN = w.hidden_n;
+        if (key === 'fc0_w' && w.fc0_w.length === HN) {
+            return PERCEPTION_BLOCKS.map((blockLabel, block) => ({
+                label: blockLabel, role: true, shape: `${HN} hidden × ${C} ch`,
+                leafPaths: () => fc0Paths(w, block, C, HN),
+                children: () => Array.from({ length: HN }, (_, k) => ({
+                    label: `h ${k}`, role: true, shape: `${C} ch`,
+                    leafPaths: () => fc0Paths(w, block, C, HN, k),
+                    children: () => Array.from({ length: C }, (_, c) => ({
+                        segs: ['fc0_w', String(k), String(perceptionColumn(w, block, c, C))],
+                        label: channelLabel(w, c)
+                    }))
+                }))
+            }));
+        }
+        if (key === 'fc1_w' && Array.isArray(w.fc1_w) && w.fc1_w.length === C) {
+            return w.fc1_w.map((_, c) => ({
+                segs: ['fc1_w', String(c)], label: `${channelLabel(w, c)} ← hidden`
+            }));
+        }
+        if (key === 'fc0_b' && Array.isArray(w.fc0_b) && w.fc0_b.length === HN) {
+            return w.fc0_b.map((_, k) => ({ segs: ['fc0_b', String(k)], label: `h ${k}` }));
+        }
+    }
+
+    if (w.kind === 'lenia') {
+        const C = w.C, K = w.K, arr = w[key];
+        if (segs.length === 1 && w.variant === 'full' && FULL_BANKS.includes(key)
+            && Array.isArray(arr) && Number.isInteger(C) && Number.isInteger(K)
+            && arr.length === C * C * K) {
+            return Array.from({ length: C }, (_, src) => ({
+                label: `from ch ${src}`, role: true, shape: `${C} targets × ${K}`,
+                leafPaths: () => fullBankPaths(segs, C, K, src),
+                children: () => Array.from({ length: C }, (_, tgt) => ({
+                    label: `→ to ch ${tgt}`, role: true,
+                    shape: `${K} kernel${K === 1 ? '' : 's'}`,
+                    leafPaths: () => fullBankPaths(segs, C, K, src, tgt),
+                    children: () => Array.from({ length: K }, (_, k) => ({
+                        segs: segs.concat(String((src * C + tgt) * K + k)), label: `k ${k}`
+                    }))
+                }))
+            }));
+        }
+        if (segs.length === 1 && key === 'H' && Array.isArray(arr) && arr.length === C) {
+            return arr.map((_, src) => ({ segs: ['H', String(src)], label: `from ch ${src}` }));
+        }
+        if (segs.length === 2 && segs[0] === 'H' && Array.isArray(w.H)) {
+            const row = w.H[Number(segs[1])];
+            if (Array.isArray(row)) {
+                return row.map((_, tgt) => ({ segs: segs.concat(String(tgt)), label: `→ to ch ${tgt}` }));
+            }
+        }
+    }
+    return null;
+}
+
 // ---- structure tree --------------------------------------------------
 
 function renderTree() {
     if (!ui || !session) return;
     ui.tree.innerHTML = '';
     if (session.fiddled === null || session.fiddled === undefined) return;
-    ui.tree.appendChild(makeNode([], 'weights.json', true));
+    ui.tree.appendChild(makeNode({ segs: [], label: 'weights.json', forceOpen: true }));
 }
 
 function nodePath(segs) { return segs.join(PATH_SEP); }
 
-// One tree row (+ a lazily filled children box for containers). `forceOpen`
-// is used for the root, which is always expanded regardless of size.
-function makeNode(segs, label, forceOpen) {
-    const value = segs.length ? getAt(session.fiddled, segs) : session.fiddled;
-    const isContainer = value !== null && typeof value === 'object';
+// One tree row (+ a lazily filled children box for containers). `spec` is
+// either a real node ({segs, label}) or a view node (one that also carries
+// `children`), whose rows name an axis rather than a stored key.
+function makeNode(spec) {
+    const view = typeof spec.children === 'function';
+    const segs = spec.segs || [];
+    const value = view ? null : (segs.length ? getAt(session.fiddled, segs) : session.fiddled);
+    const isContainer = view || (value !== null && typeof value === 'object');
 
     const node = document.createElement('div');
     node.className = 'fd-node';
-    node._segs = segs;
-    node._label = label;
+    node._spec = spec;
 
     const row = document.createElement('div');
     row.className = 'fd-row';
@@ -987,14 +1199,14 @@ function makeNode(segs, label, forceOpen) {
     row.appendChild(tog);
 
     const key = document.createElement('span');
-    key.className = 'fd-key';
-    key.innerText = label;
+    key.className = spec.role ? 'fd-key fd-role' : 'fd-key';
+    key.innerText = spec.label;
     row.appendChild(key);
 
     if (isContainer) {
         const shape = document.createElement('span');
         shape.className = 'fd-shape';
-        shape.innerText = '— ' + shapeSummary(value);
+        shape.innerText = '— ' + (view ? (spec.shape || '') : shapeSummary(value));
         row.appendChild(shape);
     } else {
         row.appendChild(makeLeafEditor(segs, value));
@@ -1002,16 +1214,25 @@ function makeNode(segs, label, forceOpen) {
 
     const tools = document.createElement('span');
     tools.className = 'fd-tools';
-    tools.appendChild(toolBtn('copy', 'Copy this subtree to the fiddle clipboard',
-        () => copyNode(segs)));
-    tools.appendChild(toolBtn('paste', 'Paste the fiddle clipboard onto this node',
-        () => pasteNode(segs, node)));
-    if (isContainer) {
-        tools.appendChild(toolBtn('json', 'Edit this subtree as raw JSON',
-            () => jsonEditNode(segs, node)));
-        if (isNumericSubtree(value)) {
-            tools.appendChild(toolBtn('scale', 'Multiply every number below by a factor',
-                () => scaleNode(segs, node)));
+    if (view) {
+        // No real path to copy from or paste onto — but scaling every number
+        // under one named axis ("turn sobel x down") is the point of the view.
+        if (typeof spec.leafPaths === 'function') {
+            tools.appendChild(toolBtn('scale', 'Multiply every number under this axis by a factor',
+                () => scaleView(spec, node)));
+        }
+    } else {
+        tools.appendChild(toolBtn('copy', 'Copy this subtree to the fiddle clipboard',
+            () => copyNode(segs)));
+        tools.appendChild(toolBtn('paste', 'Paste the fiddle clipboard onto this node',
+            () => pasteNode(segs, node)));
+        if (isContainer) {
+            tools.appendChild(toolBtn('json', 'Edit this subtree as raw JSON',
+                () => jsonEditNode(segs, node)));
+            if (isNumericSubtree(value)) {
+                tools.appendChild(toolBtn('scale', 'Multiply every number below by a factor',
+                    () => scaleNode(segs, node)));
+            }
         }
     }
     row.appendChild(tools);
@@ -1022,9 +1243,11 @@ function makeNode(segs, label, forceOpen) {
         kids.style.display = 'none';
         node.appendChild(kids);
         tog.onclick = () => toggleNode(node);
-        // Small subtrees open on sight; big ones (fc0_w, kernel banks) stay
-        // shut so opening the modal never renders thousands of rows.
-        if (forceOpen || countLeaves(value, AUTO_OPEN_LEAVES + 1) <= AUTO_OPEN_LEAVES) {
+        // Small subtrees open on sight; big ones (fc0_w, kernel banks) and
+        // every view node stay shut so opening the modal never renders
+        // thousands of rows.
+        if (spec.forceOpen || (!view
+            && countLeaves(value, AUTO_OPEN_LEAVES + 1) <= AUTO_OPEN_LEAVES)) {
             toggleNode(node, true);
         }
     }
@@ -1051,19 +1274,31 @@ function toggleNode(node, forceOpen) {
 }
 
 function buildChildren(node) {
-    const segs = node._segs;
-    const value = segs.length ? getAt(session.fiddled, segs) : session.fiddled;
+    const spec = node._spec;
     const kids = node.querySelector(':scope > .fd-children');
     kids.innerHTML = '';
-    const keys = Array.isArray(value)
-        ? value.map((_, i) => String(i))
-        : Object.keys(value);
-    const shown = keys.slice(0, MAX_CHILD_ROWS);
-    for (const k of shown) kids.appendChild(makeNode(segs.concat(k), k, false));
-    if (keys.length > shown.length) {
+
+    let specs;
+    if (typeof spec.children === 'function') {
+        specs = spec.children();
+    } else {
+        const segs = spec.segs;
+        specs = viewChildren(segs);
+        if (!specs) {
+            const value = segs.length ? getAt(session.fiddled, segs) : session.fiddled;
+            const keys = Array.isArray(value)
+                ? value.map((_, i) => String(i))
+                : Object.keys(value);
+            specs = keys.map(k => ({ segs: segs.concat(k), label: k }));
+        }
+    }
+
+    const shown = specs.slice(0, MAX_CHILD_ROWS);
+    for (const s of shown) kids.appendChild(makeNode(s));
+    if (specs.length > shown.length) {
         const more = document.createElement('div');
         more.className = 'fd-more';
-        more.innerText = `… ${keys.length - shown.length} more entries not shown — use [json] to view or edit them`;
+        more.innerText = `… ${specs.length - shown.length} more entries not shown — use [json] to view or edit them`;
         kids.appendChild(more);
     }
     node._built = true;
@@ -1073,7 +1308,9 @@ function buildChildren(node) {
 // preserving its position in the tree but not its children's open state.
 function refreshNode(node) {
     if (!node) { renderTree(); return; }
-    const replacement = makeNode(node._segs, node._label, node._segs.length === 0);
+    const spec = node._spec;
+    const replacement = makeNode(
+        Object.assign({}, spec, { forceOpen: spec.forceOpen || (spec.segs && !spec.segs.length) }));
     node.replaceWith(replacement);
 }
 
@@ -1209,6 +1446,25 @@ function scaleNode(segs, node) {
     markDirty();
     if (!segs.length) renderTree(); else refreshNode(node);
     liveStatus(`scaled ${nodePath(segs) || '(whole weights)'} by ${f}`);
+}
+
+// [scale] on a view node: the axis it names has no single stored path, so it
+// walks the real leaves it stands for (a whole perception block, one hidden
+// unit's slice of it, one src→tgt kernel group).
+function scaleView(spec, node) {
+    const raw = prompt(`Multiply every number under ${spec.label} by:`, '1.0');
+    if (raw === null) return;
+    const f = parseFloat(raw);
+    if (!Number.isFinite(f)) { liveStatus(`'${raw}' is not a number — nothing scaled`); return; }
+    let n = 0;
+    for (const path of spec.leafPaths()) {
+        const v = getAt(session.fiddled, path);
+        if (typeof v === 'number') { writeAt(path, v * f); n++; }
+        else if (v !== null && typeof v === 'object') { writeAt(path, scaleNumbers(v, f)); n++; }
+    }
+    markDirty();
+    refreshNode(node);
+    liveStatus(`scaled ${n} entries under ${spec.label} by ${f}`);
 }
 
 // Modal-in-modal JSON textarea. Resolves only on a successful parse; the

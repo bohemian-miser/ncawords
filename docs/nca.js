@@ -71,6 +71,53 @@ function computeDxZero({ C, HN, b0, w1 }) {
   return dx;
 }
 
+// Packs fc0 (weights + bias in the trailing column) and fc1 into the RGBA32F
+// texture layouts buildUpdateFS reads. Shared by GLCA's constructor and its
+// hot-swap path, which must produce byte-identical data.
+function packW0(f, T) {
+  const { C, HN, C3, w0, b0 } = f;
+  const WD = 3 * T + 1;
+  const data = new Float32Array(WD * HN * 4);
+  for (let k = 0; k < HN; k++) {
+    for (let sec = 0; sec < 3; sec++) {
+      for (let t = 0; t < T; t++) {
+        for (let lane = 0; lane < 4; lane++) {
+          const c = 4 * t + lane;
+          if (c < C) data[(k * WD + sec * T + t) * 4 + lane] = w0[k * C3 + sec * C + c];
+        }
+      }
+    }
+    data[(k * WD + 3 * T) * 4] = b0[k];
+  }
+  return { WD, data };
+}
+
+function packW1(f, T) {
+  const { C, HN, w1 } = f;
+  const data = new Float32Array(HN * T * 4);
+  for (let t = 0; t < T; t++) {
+    for (let k = 0; k < HN; k++) {
+      for (let lane = 0; lane < 4; lane++) {
+        const c = 4 * t + lane;
+        if (c < C) data[(t * HN + k) * 4 + lane] = w1[c * HN + k];
+      }
+    }
+  }
+  return data;
+}
+
+function makeWeightTex(gl, w, h, data) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, w, h);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.FLOAT, data);
+  return tex;
+}
+
 function rgbaFromState(state, C, plane, out) {
   // v = clamp01(1 - a + rgb) * 255 with a clamped to [0,1] (model.py to_rgb).
   if (!out) out = new Uint8ClampedArray(plane * 4);
@@ -129,6 +176,29 @@ export class CPUCA {
   get height() { return this._H; }
 
   clear() { this._buf.fill(0); }
+
+  // Hot-swap the trained parameters while KEEPING the current grid state (the
+  // gallery's live-fiddle path). The state buffer is shaped by channel_n and
+  // the grid only, so new MLP weights, a new hidden_n, or a new fire_rate all
+  // take effect on the next step(); changing channel_n or the grid needs a
+  // rebuild. Returns false when the new weights don't fit this instance.
+  setWeights(weights) {
+    const dims = gridDims(weights);
+    if (weights.channel_n !== this._C || dims.W !== this._W || dims.H !== this._H) return false;
+    const f = flattenWeights(weights);
+    this._HN = f.HN;
+    this._w0 = f.w0;
+    this._b0 = f.b0;
+    this._w1 = f.w1;
+    this._dxZero = computeDxZero(f);
+    this._h = new Float64Array(f.HN);
+    this.hidden_n = weights.hidden_n;
+    this.fire_rate = weights.fire_rate;
+    this._seeds = weights.seeds || null;
+    this._codeCh0 = weights.code_ch0;
+    this._codeBits = weights.code_bits;
+    return true;
+  }
 
   reset(noise = false) {
     this.clear();
@@ -528,53 +598,14 @@ export class GLCA {
     this._cur = 0;
 
     // --- Weight textures ---
-    const HN = f.HN, C = f.C;
-    const WD = 3 * T + 1;
-    const w0data = new Float32Array(WD * HN * 4);
-    for (let k = 0; k < HN; k++) {
-      for (let sec = 0; sec < 3; sec++) {
-        for (let t = 0; t < T; t++) {
-          for (let lane = 0; lane < 4; lane++) {
-            const c = 4 * t + lane;
-            if (c < C) w0data[(k * WD + sec * T + t) * 4 + lane] = f.w0[k * f.C3 + sec * C + c];
-          }
-        }
-      }
-      w0data[(k * WD + 3 * T) * 4] = f.b0[k];
-    }
-    const w1data = new Float32Array(HN * T * 4);
-    for (let t = 0; t < T; t++) {
-      for (let k = 0; k < HN; k++) {
-        for (let lane = 0; lane < 4; lane++) {
-          const c = 4 * t + lane;
-          if (c < C) w1data[(t * HN + k) * 4 + lane] = f.w1[c * HN + k];
-        }
-      }
-    }
-    const makeWeightTex = (w, h, data) => {
-      const tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, w, h);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.FLOAT, data);
-      return tex;
-    };
-    this._w0Tex = makeWeightTex(WD, HN, w0data);
-    this._w1Tex = makeWeightTex(HN, T, w1data);
+    const HN = f.HN;
+    const packed0 = packW0(f, T);
+    this._w0Tex = makeWeightTex(gl, packed0.WD, HN, packed0.data);
+    this._w1Tex = makeWeightTex(gl, HN, T, packW1(f, T));
 
     // --- Programs ---
-    this._progU = compileProgram(gl, VS, buildUpdateFS(T, HN));
+    this._buildUpdateProgram(HN);
     this._progM = compileProgram(gl, VS, buildMaskFS(T));
-    gl.useProgram(this._progU);
-    for (let t = 0; t < T; t++) gl.uniform1i(gl.getUniformLocation(this._progU, `uS${t}`), t);
-    gl.uniform1i(gl.getUniformLocation(this._progU, "uW0"), T);
-    gl.uniform1i(gl.getUniformLocation(this._progU, "uW1"), T + 1);
-    gl.uniform2i(gl.getUniformLocation(this._progU, "uSize"), W, H);
-    this._uFireRate = gl.getUniformLocation(this._progU, "uFireRate");
-    this._uFrame = gl.getUniformLocation(this._progU, "uFrame");
     gl.useProgram(this._progM);
     gl.uniform1i(gl.getUniformLocation(this._progM, "uOldA"), 0);
     for (let t = 0; t < T; t++) gl.uniform1i(gl.getUniformLocation(this._progM, `uN${t}`), 1 + t);
@@ -587,6 +618,55 @@ export class GLCA {
 
   get width() { return this._W; }
   get height() { return this._H; }
+
+  // The update shader bakes in T and hidden_n, so a changed hidden_n needs a
+  // fresh program. The state textures are sized by C and the grid alone and
+  // are deliberately left untouched.
+  _buildUpdateProgram(HN) {
+    const gl = this.gl, T = this._T;
+    if (this._progU) gl.deleteProgram(this._progU);
+    this._progU = compileProgram(gl, VS, buildUpdateFS(T, HN));
+    gl.useProgram(this._progU);
+    for (let t = 0; t < T; t++) gl.uniform1i(gl.getUniformLocation(this._progU, `uS${t}`), t);
+    gl.uniform1i(gl.getUniformLocation(this._progU, "uW0"), T);
+    gl.uniform1i(gl.getUniformLocation(this._progU, "uW1"), T + 1);
+    gl.uniform2i(gl.getUniformLocation(this._progU, "uSize"), this._W, this._H);
+    this._uFireRate = gl.getUniformLocation(this._progU, "uFireRate");
+    this._uFrame = gl.getUniformLocation(this._progU, "uFrame");
+  }
+
+  // Hot-swap the trained parameters while KEEPING the current grid state — see
+  // CPUCA.setWeights. Same contract: channel_n and the grid must not change.
+  setWeights(weights) {
+    const gl = this.gl, T = this._T;
+    const dims = gridDims(weights);
+    if (weights.channel_n !== this._C || dims.W !== this._W || dims.H !== this._H) return false;
+    const f = flattenWeights(weights);
+    const packed0 = packW0(f, T);
+    if (f.HN !== this._HN) {
+      // texStorage2D sizes are immutable and both textures are sized by
+      // hidden_n, so they have to be replaced rather than re-uploaded.
+      gl.deleteTexture(this._w0Tex);
+      gl.deleteTexture(this._w1Tex);
+      this._w0Tex = makeWeightTex(gl, packed0.WD, f.HN, packed0.data);
+      this._w1Tex = makeWeightTex(gl, f.HN, T, packW1(f, T));
+      this._HN = f.HN;
+      this._buildUpdateProgram(f.HN);
+    } else {
+      gl.bindTexture(gl.TEXTURE_2D, this._w0Tex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, packed0.WD, f.HN,
+        gl.RGBA, gl.FLOAT, packed0.data);
+      gl.bindTexture(gl.TEXTURE_2D, this._w1Tex);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, f.HN, T,
+        gl.RGBA, gl.FLOAT, packW1(f, T));
+    }
+    this.hidden_n = weights.hidden_n;
+    this.fire_rate = weights.fire_rate;
+    this._seeds = weights.seeds || null;
+    this._codeCh0 = weights.code_ch0;
+    this._codeBits = weights.code_bits;
+    return true;
+  }
 
   _bindFbo(set) {
     const gl = this.gl;
