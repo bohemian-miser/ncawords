@@ -248,7 +248,7 @@ def export_weights(model, ch, grid, glyph, path, seed_pos=None):
     w0 = model.fc0.weight.detach().squeeze(-1).squeeze(-1).numpy()  # [H, 3C]
     w0 = w0.reshape(-1, c, 3).transpose(0, 2, 1).reshape(-1, 3 * c)
     if seed_pos is None:
-        seed_pos = (grid // 2, grid // 2)
+        seed_pos = (grid // 2, grid // 2) if grid is not None else (0, 0)
     d = {
         "char": ch,
         "grid": grid,

@@ -9,8 +9,9 @@
 // anonymously. Overridable via an optional config.js (gitignored) that
 // sets window.NCA_CONFIG.bucket.
 const BUCKET = (window.NCA_CONFIG && window.NCA_CONFIG.bucket) || 'recipe-lanes-nca-jobs';
-const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
-const BUCKET_LIST = `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
+const BUCKET_BASE = (window.NCA_CONFIG && window.NCA_CONFIG.bucketBase) || `https://storage.googleapis.com/${BUCKET}/`;
+const API_BASE = (window.NCA_CONFIG && window.NCA_CONFIG.apiBase) || `https://storage.googleapis.com/storage/v1/b/${BUCKET}`;
+const BUCKET_LIST = `${API_BASE}/o?fields=items(name,updated),nextPageToken&maxResults=1000`;
 
 // run name -> { url, updated } for every run with an exported weights.json.
 let cloudModels = {};

@@ -1,8 +1,24 @@
+# Virtual environments
+venv/
 .venv/
+env/
+
+# Python cache & build
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
 logs/
+
+# Checkpoints and large artifacts
 snaps/
-*.pyc
+nca_runs/
+*.pth
+*.pt
+*.tar.gz
+*.log
 
 # per-clone fleet configuration (written by ./init.sh)
 fleet.config.json
@@ -11,3 +27,8 @@ docs/config.js
 # personal job queues (queues/example.txt documents the format)
 queues/*.txt
 !queues/example.txt
+
+# System & OS
+.DS_Store
+.vscode/
+.idea/

@@ -83,10 +83,11 @@ def export_run_weights(model, snap_dir, text, glyph=12, grid_w=100, grid_h=40,
     """
     if not snap_dir:
         return
-    cpu_model = NCA(model.channel_n, hidden_n=model.fc0.out_channels)
-    cpu_model.load_state_dict({k: v.cpu() for k, v in model.state_dict().items()})
+    raw = getattr(model, '_orig_mod', model)
+    cpu_model = NCA(raw.channel_n, hidden_n=raw.fc0.out_channels)
+    cpu_model.load_state_dict({k.removeprefix('_orig_mod.'): v.cpu() for k, v in raw.state_dict().items()})
     out = Path(snap_dir) / "weights.json"
-    export_weights(cpu_model, text, None, glyph, out)
+    export_weights(cpu_model, text, None, glyph, out, seed_pos=(grid_w // 2, grid_h // 2))
     d = json.loads(out.read_text())
     d.update({"kind": "word", "text": text, "grid_w": grid_w, "grid_h": grid_h,
               "grid": None})

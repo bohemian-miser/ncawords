@@ -12,10 +12,10 @@
   .lenia-controls button { padding:4px 10px; background:#444; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:bold; }
   .lenia-controls button:hover { background:#555; }
   .lenia-controls input[type="range"] { vertical-align:middle; }
-  #cards-container .card { width: 340px; }
-  .kernel-row { display:flex; justify-content:space-between; gap:12px; margin-top:10px; }
-  .kernel-row > div { width:48%; }
-  .kernel-row .img-container { height:110px; }
+  #cards-container .card { width: 360px; }
+  .kernel-row { display:flex; justify-content:space-between; gap:10px; margin-top:10px; }
+  .kernel-row > div { flex: 1 1 0; min-width: 0; }
+  .kernel-row .img-container { height:105px; }
   .target-row { margin-top:10px; }
   .target-row .img-container { height:90px; width:90px; margin:0 auto; }
   .run-desc { font-size:0.8em; color:#888; margin-top:4px; min-height:1.1em; }
@@ -25,6 +25,59 @@
   .lenia-live { margin-top:10px; padding-top:10px; border-top:1px dashed #444; }
   .live-canvas-wrap { display:inline-block; position:relative; background:#000; border:2px solid #444; border-radius:4px; }
   .lenia-live canvas { width:256px; height:256px; image-rendering:pixelated; cursor:crosshair; display:block; }
+  .kernel-hud {
+    position: absolute;
+    pointer-events: none;
+    background: rgba(14, 18, 26, 0.94);
+    border: 1px solid #4db8ff;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: monospace;
+    font-size: 0.70rem;
+    color: #eee;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.85);
+    z-index: 1000;
+    display: none;
+    white-space: nowrap;
+  }
+  .kernel-hud .hud-title {
+    color: #4db8ff;
+    font-weight: bold;
+    margin-bottom: 4px;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .kernel-hud-canvases {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    justify-content: center;
+  }
+  .kernel-hud-item {
+    text-align: center;
+  }
+  .kernel-hud-item canvas {
+    border: 1px solid #555;
+    background: #08080a;
+    image-rendering: pixelated;
+    width: 64px !important;
+    height: 64px !important;
+    display: block;
+    margin: 0 auto;
+  }
+  .kernel-hud-item .hud-label {
+    font-size: 0.62rem;
+    color: #aaa;
+    margin-top: 2px;
+  }
+  .kernel-hud .hud-info {
+    font-size: 0.65rem;
+    color: #888;
+    margin-top: 4px;
+    border-top: 1px solid #333;
+    padding-top: 2px;
+  }
 
   /* deprecated (stencil-trained) runs */
   .deprecated-card { opacity: 0.82; }
@@ -182,8 +235,7 @@
         <div class="sub-desc">Target</div>
         <div class="img-container"><img id="lm-target"></div>
       </div>
-      <!-- Three generic latest-frame slots: primary stream, then up to two
-           secondary streams; labels are filled in per run. -->
+      <!-- Generic latest-frame slots: primary stream, then secondary streams; labels are filled in per run. -->
       <div>
         <div class="sub-desc" id="lm-comp-label"></div>
         <div class="img-container"><img id="lm-comp"></div>
@@ -196,14 +248,18 @@
         <div class="sub-desc" id="lm-coupling-label"></div>
         <div class="img-container"><img id="lm-coupling"></div>
       </div>
+      <div>
+        <div class="sub-desc" id="lm-sec3-label"></div>
+        <div class="img-container"><img id="lm-sec3"></div>
+      </div>
     </div>
   </div>
 </div>
 
-<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-18</div>
+<div style="position:fixed; bottom:6px; right:10px; color:#555; font-size:11px;">build ?v=lenia-20</div>
 <!-- Optional local overrides (gitignored); a 404 on this plain script tag
      is harmless — lenia.js falls back to the default bucket. -->
 <script src="config.js"></script>
-<script type="module" src="lenia.js?v=lenia-18"></script>
+<script type="module" src="lenia.js?v=lenia-21"></script>
 </body>
 </html>

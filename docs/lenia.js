@@ -27,7 +27,8 @@ const container = document.getElementById('cards-container');
 // anonymously, so a static page needs no backend at all. Overridable via
 // an optional config.js (gitignored) that sets window.NCA_CONFIG.bucket.
 const BUCKET = (window.NCA_CONFIG && window.NCA_CONFIG.bucket) || 'recipe-lanes-nca-jobs';
-const BUCKET_BASE = `https://storage.googleapis.com/${BUCKET}/`;
+const BUCKET_BASE = (window.NCA_CONFIG && window.NCA_CONFIG.bucketBase) || `https://storage.googleapis.com/${BUCKET}/`;
+const API_BASE = (window.NCA_CONFIG && window.NCA_CONFIG.apiBase) || `https://storage.googleapis.com/storage/v1/b/${BUCKET}`;
 
 // The "Fiddle" feature (fiddle.js) edits a run's exported weights live and
 // shares the result as a '#fiddle=<token>' URL. It owns its own modal, so
@@ -53,10 +54,11 @@ const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 // synced to the same timeline (START, KERNEL, COUPLING preferred, then
 // others alphabetically).
 const PRIMARY_PREF = ['COMP', 'GOL', 'PATTERN'];
-const SECONDARY_PREF = ['START', 'KERNEL', 'COUPLING'];
+const SECONDARY_PREF = ['START', 'KERNEL', 'POOL', 'COUPLING'];
 const TAG_LABELS = {
     START: 'start state',
     KERNEL: 'learned kernels',
+    POOL: 'sample pool',
     COUPLING: 'channel coupling',
     RECOV: 'post-damage recovery',
     TARGET: 'moving target'
@@ -72,7 +74,7 @@ function pickTags(streams) {
     const secondary = [
         ...SECONDARY_PREF.filter(t => rest.includes(t)),
         ...rest.filter(t => !SECONDARY_PREF.includes(t)).sort()
-    ].slice(0, 2);
+    ].slice(0, 3);
     return { primary, secondary };
 }
 
@@ -125,7 +127,7 @@ async function listLeniaRuns(onPage) {
     let pageToken = null;
     do {
         const dirRes = await fetch(
-            `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
+            `${API_BASE}/o` +
             `?prefix=&delimiter=/&fields=prefixes,nextPageToken&maxResults=1000` +
             (pageToken ? `&pageToken=${pageToken}` : ''));
         if (!dirRes.ok) throw new Error(`bucket dir list failed: ${dirRes.status}`);
@@ -139,7 +141,7 @@ async function listLeniaRuns(onPage) {
     const runs = {};
     await Promise.all(dirs.map(async run => {
         const res = await fetch(
-            `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o` +
+            `${API_BASE}/o` +
             `?prefix=${encodeURIComponent(run + '/')}` +
             `&fields=items(name,updated)&maxResults=1000`);
         if (!res.ok) return;
@@ -559,6 +561,10 @@ function buildCard(m) {
                 <div class="sub-desc" id="sec1_label_${m.id}"></div>
                 <div class="img-container"><img loading="lazy" id="sec1_${m.id}" style="display:none;"></div>
             </div>
+            <div id="sec2_wrap_${m.id}">
+                <div class="sub-desc" id="sec2_label_${m.id}"></div>
+                <div class="img-container"><img loading="lazy" id="sec2_${m.id}" style="display:none;"></div>
+            </div>
         </div>
         <div class="target-row">
             <div class="target-row-flex">
@@ -576,11 +582,11 @@ function buildCard(m) {
         <div class="last-snapshot" id="lastsnap_${m.id}"></div>
         <div class="lenia-live-toggle">
             <button id="livetoggle_${m.id}">&#9654; Run live</button>
-        </div>
         <div class="lenia-live" id="live_${m.id}" style="display:none;">
-            <div class="sub-desc">live trained physics</div>
+            <div class="sub-desc">live trained physics — hover mouse to inspect kernel</div>
             <div class="live-canvas-wrap">
                 <canvas id="livecanvas_${m.id}" width="64" height="64"></canvas>
+                <div class="kernel-hud" id="hud_${m.id}"></div>
             </div>
             <div class="lenia-controls">
                 <button id="liveplay_${m.id}" title="Play/pause live simulation">&#9654;</button>
@@ -611,7 +617,7 @@ function buildCard(m) {
         cardObj: card,
         imgObj: card.querySelector(`#comp_${esc}`),
         secRowObj: card.querySelector(`#secrow_${esc}`),
-        secSlots: [0, 1].map(i => ({
+        secSlots: [0, 1, 2].map(i => ({
             tag: null,
             wrapObj: card.querySelector(`#sec${i}_wrap_${esc}`),
             imgObj: card.querySelector(`#sec${i}_${esc}`),
@@ -633,6 +639,11 @@ function buildCard(m) {
         liveToggleBtn: card.querySelector(`#livetoggle_${esc}`),
         liveSecObj: card.querySelector(`#live_${esc}`),
         liveCanvas: card.querySelector(`#livecanvas_${esc}`),
+        hudObj: card.querySelector(`#hud_${esc}`),
+        hudCanvases: null,
+        hudLabels: null,
+        liveWeights: null,
+        lastMouseEv: null,
         livePlayBtn: card.querySelector(`#liveplay_${esc}`),
         liveSpeedObj: card.querySelector(`#livespeed_${esc}`),
         liveStatusObj: card.querySelector(`#livestatus_${esc}`),
@@ -663,9 +674,17 @@ function buildCard(m) {
     tr.livechanGrid = document.getElementById(`livechangrid_${m.id}`);
     if (tr.livechansBtn) tr.livechansBtn.onclick = () => window.liveChannels(m.id);
     tr.liveCanvas.addEventListener('mousedown', (e) => { tr.liveDamaging = true; liveDamageAt(tr, e); });
-    tr.liveCanvas.addEventListener('mousemove', (e) => { if (tr.liveDamaging) liveDamageAt(tr, e); });
+    tr.liveCanvas.addEventListener('mousemove', (e) => {
+        tr.lastMouseEv = e;
+        if (tr.liveDamaging) liveDamageAt(tr, e);
+        updateKernelHudAt(tr, e);
+    });
     tr.liveCanvas.addEventListener('mouseup', () => { tr.liveDamaging = false; });
-    tr.liveCanvas.addEventListener('mouseleave', () => { tr.liveDamaging = false; });
+    tr.liveCanvas.addEventListener('mouseleave', () => {
+        tr.liveDamaging = false;
+        tr.lastMouseEv = null;
+        hideKernelHud(tr);
+    });
 
     assignSecondaryTags(tr);
     updateScrubRange(tr);
@@ -1095,9 +1114,9 @@ function openLeniaModal(id) {
     targetImg.src = m.dir + 'target.png';
 
     // Latest frame of the primary stream plus each secondary stream, in the
-    // modal's three generic image slots.
+    // modal's generic image slots.
     const modalTags = [tr.primaryTag, ...(tr.secTags || [])];
-    ['lm-comp', 'lm-kernel', 'lm-coupling'].forEach((slotId, i) => {
+    ['lm-comp', 'lm-kernel', 'lm-coupling', 'lm-sec3'].forEach((slotId, i) => {
         const tag = modalTags[i] || null;
         const steps = tag ? (tr.streams[tag] || []) : [];
         const last = steps.length ? steps[steps.length - 1] : null;
@@ -1146,6 +1165,9 @@ function drawLive(tr) {
     if (out && out !== tr.liveImgData.data) tr.liveImgData.data.set(out);
     tr.liveCtx.putImageData(tr.liveImgData, 0, 0);
     renderLiveChannels(tr);   // keep the channel grid in sync when visible
+    if (tr.lastMouseEv && tr.hudObj && tr.hudObj.style.display === 'block') {
+        updateKernelHudAt(tr, tr.lastMouseEv);
+    }
 }
 
 function runLiveLoop(tr) {
@@ -1227,6 +1249,7 @@ async function activateOrCollapseLive(tr) {
             return;
         }
         const weights = await res.json();
+        tr.liveWeights = weights;
 
         // Engine selection by weights.json content: `kind === 'lenia'` is a
         // trainable-Lenia export (lenia_engine.js); anything with the NCA
@@ -1368,6 +1391,241 @@ function liveDamageAt(tr, e) {
     const normY = (e.clientY - rect.top) / rect.height;
     tr.liveCA.damage(normX * tr.liveCA.width, normY * tr.liveCA.height, 6);
     drawLive(tr);
+}
+
+function hideKernelHud(tr) {
+    if (tr.hudObj) tr.hudObj.style.display = 'none';
+}
+
+function updateKernelHudAt(tr, e) {
+    if (!tr.hudObj || !tr.liveCA) return;
+    const weights = tr.liveWeights;
+    const rect = tr.liveCanvas.getBoundingClientRect();
+    const clientX = e.clientX - rect.left;
+    const clientY = e.clientY - rect.top;
+    if (clientX < 0 || clientX > rect.width || clientY < 0 || clientY > rect.height) {
+        hideKernelHud(tr);
+        return;
+    }
+    const normX = Math.max(0, Math.min(0.9999, clientX / rect.width));
+    const normY = Math.max(0, Math.min(0.9999, clientY / rect.height));
+    const W = tr.liveCA.width || 64;
+    const H = tr.liveCA.height || 64;
+    const gx = Math.floor(normX * W);
+    const gy = Math.floor(normY * H);
+
+    // Read current pixel state / alpha
+    let alphaVal = 0.0;
+    let rVal = 0, gVal = 0, bVal = 0;
+    if (tr.liveImgData && tr.liveImgData.data) {
+        const pIdx = (gy * W + gx) * 4;
+        rVal = tr.liveImgData.data[pIdx];
+        gVal = tr.liveImgData.data[pIdx + 1];
+        bVal = tr.liveImgData.data[pIdx + 2];
+        alphaVal = tr.liveImgData.data[pIdx + 3] / 255.0;
+    }
+
+    // Determine kernels to display:
+    let effKernels = [];
+    let isDynamic = false;
+    let ks = 3;
+
+    if (tr.liveCA && typeof tr.liveCA.getKernelAt === 'function') {
+        effKernels = tr.liveCA.getKernelAt(gx, gy);
+        isDynamic = Boolean(weights && (weights.kind === 'dynamic_kernel_nca' || weights.basis_kernels));
+        ks = effKernels[0].length;
+    } else if (weights && (weights.kind === 'dynamic_kernel_nca' || weights.basis_kernels)) {
+        isDynamic = true;
+        ks = weights.kernel_size || 5;
+        const Nk = weights.num_kernels || 2;
+        const M = weights.num_basis || 4;
+        const basis = weights.basis_kernels;
+        const w_surr = weights.w_surround;
+        const b_surr = weights.b_surround;
+
+        // Try reading surrounding pixels from CA buffer if CPUCA
+        const buf = tr.liveCA._buf;
+        const C = tr.liveCA._C || 16;
+        const plane = tr.liveCA._plane || (W * H);
+
+        const temp = weights.temperature || 0.5;
+
+        for (let k = 0; k < Nk; k++) {
+            const logits = [];
+            for (let m = 0; m < M; m++) {
+                const idx = k * M + m;
+                let a = (b_surr && b_surr[idx] !== undefined) ? b_surr[idx] : 0.0;
+                if (w_surr && buf) {
+                    const ws = w_surr[idx];
+                    for (let dy = -1; dy <= 1; dy++) {
+                        const py = gy + dy;
+                        if (py < 0 || py >= H) continue;
+                        const rowOff = py * W;
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const px = gx + dx;
+                            if (px < 0 || px >= W) continue;
+                            for (let c = 0; c < C; c++) {
+                                a += ws[c][dy + 1][dx + 1] * buf[c * plane + rowOff + px];
+                            }
+                        }
+                    }
+                }
+                logits.push(a);
+            }
+
+            // Softmax over basis filters with temperature
+            let maxL = -Infinity;
+            for (let m = 0; m < M; m++) if (logits[m] > maxL) maxL = logits[m];
+            let sumExp = 0;
+            const alpha_k = [];
+            for (let m = 0; m < M; m++) {
+                const e = Math.exp((logits[m] - maxL) / temp);
+                alpha_k.push(e);
+                sumExp += e;
+            }
+            for (let m = 0; m < M; m++) alpha_k[m] /= sumExp;
+
+            // Synthesize effective 2D kernel at (gx, gy)
+            const mat = [];
+            for (let u = 0; u < ks; u++) {
+                mat[u] = [];
+                for (let v = 0; v < ks; v++) {
+                    let s = 0.0;
+                    for (let m = 0; m < M; m++) {
+                        s += alpha_k[m] * basis[k][m][u][v];
+                    }
+                    mat[u][v] = s;
+                }
+            }
+            effKernels.push(mat);
+        }
+    } else if (weights && weights.kernels && weights.kernels.length >= 2) {
+        effKernels = weights.kernels;
+        ks = effKernels[0].length;
+    } else if (tr.liveCA && tr.liveCA._kernels && tr.liveCA._kernels.length >= 2) {
+        effKernels = tr.liveCA._kernels;
+        ks = effKernels[0].length;
+    } else {
+        // Fallback Sobel filters
+        effKernels = [
+            [[-1/8, 0, 1/8], [-2/8, 0, 2/8], [-1/8, 0, 1/8]],
+            [[-1/8, -2/8, -1/8], [0, 0, 0], [1/8, 2/8, 1/8]]
+        ];
+        ks = 3;
+    }
+
+    // Build or update the HUD DOM
+    if (!tr.hudCanvases || tr.hudCanvases.length !== effKernels.length) {
+        tr.hudObj.innerHTML = `
+            <div class="hud-title">
+                <span id="hud_coord_${tr.id}">📍 (${gx}, ${gy})</span>
+                <span id="hud_tag_${tr.id}" style="font-size:0.65rem; color:${isDynamic ? '#00e676' : '#4db8ff'}; font-weight:normal;">
+                    ${isDynamic ? 'Dynamic (surround)' : 'Learned ' + ks + '×' + ks}
+                </span>
+            </div>
+            <div class="kernel-hud-canvases" id="hud_cvwrap_${tr.id}"></div>
+            <div class="hud-info" id="hud_info_${tr.id}"></div>
+        `;
+        const cvWrap = tr.hudObj.querySelector(`#hud_cvwrap_${tr.id}`);
+        tr.hudCanvases = [];
+        tr.hudLabels = [];
+        for (let k = 0; k < effKernels.length; k++) {
+            const item = document.createElement('div');
+            item.className = 'kernel-hud-item';
+            const cv = document.createElement('canvas');
+            cv.width = 64;
+            cv.height = 64;
+            const lab = document.createElement('div');
+            lab.className = 'hud-label';
+            lab.innerText = k === 0 ? 'K0 (Sobel X)' : (k === 1 ? 'K1 (Sobel Y)' : `K${k}`);
+            item.appendChild(cv);
+            item.appendChild(lab);
+            cvWrap.appendChild(item);
+            tr.hudCanvases.push(cv);
+            tr.hudLabels.push(lab);
+        }
+    }
+
+    // Update coordinate & tag text
+    const coordEl = tr.hudObj.querySelector(`#hud_coord_${tr.id}`);
+    if (coordEl) coordEl.innerText = `📍 (${gx}, ${gy})`;
+    const tagEl = tr.hudObj.querySelector(`#hud_tag_${tr.id}`);
+    if (tagEl) {
+        tagEl.innerText = isDynamic ? 'Dynamic (surround)' : 'Learned ' + ks + '×' + ks;
+        tagEl.style.color = isDynamic ? '#00e676' : '#4db8ff';
+    }
+
+    // Render each kernel heatmap onto its canvas
+    for (let k = 0; k < effKernels.length; k++) {
+        const cv = tr.hudCanvases[k];
+        if (!cv) continue;
+        const ctx = cv.getContext('2d');
+        const mat = effKernels[k];
+        renderKernelHeatmap(ctx, mat, cv.width, cv.height);
+    }
+
+    // Info footer with cell state & basis weights
+    const infoEl = tr.hudObj.querySelector(`#hud_info_${tr.id}`);
+    if (infoEl) {
+        let text = `Cell RGB: [${rVal}, ${gVal}, ${bVal}] | α: ${alphaVal.toFixed(2)}`;
+        if (effKernels.alphas && effKernels.alphas.length >= 2) {
+            const a0 = effKernels.alphas[0].map(v => Math.round(v * 100) + '%').join('/');
+            const a1 = effKernels.alphas[1].map(v => Math.round(v * 100) + '%').join('/');
+            text += `<div style="font-size:0.64rem; color:#81c784; margin-top:3px;">K0 basis: [${a0}] &nbsp; K1: [${a1}]</div>`;
+        }
+        infoEl.innerHTML = text;
+    }
+
+    // Position HUD relative to canvas wrap without overflowing
+    let left = clientX + 16;
+    let top = clientY + 16;
+    const hudW = tr.hudObj.offsetWidth || 170;
+    const hudH = tr.hudObj.offsetHeight || 110;
+    if (left + hudW > 256) left = Math.max(4, clientX - hudW - 12);
+    if (top + hudH > 256) top = Math.max(4, 256 - hudH - 8);
+    tr.hudObj.style.left = `${left}px`;
+    tr.hudObj.style.top = `${top}px`;
+    tr.hudObj.style.display = 'block';
+}
+
+function renderKernelHeatmap(ctx, mat, width, height) {
+    const ks = mat.length;
+    const cellSize = width / ks;
+    let maxAbs = 1e-4;
+    for (let y = 0; y < ks; y++) {
+        for (let x = 0; x < ks; x++) {
+            maxAbs = Math.max(maxAbs, Math.abs(mat[y][x]));
+        }
+    }
+    const pad = Math.floor(ks / 2);
+    for (let y = 0; y < ks; y++) {
+        for (let x = 0; x < ks; x++) {
+            const v = mat[y][x];
+            const norm = v / maxAbs;
+            if (norm >= 0) {
+                const r = Math.round(25 + norm * 230);
+                const g = Math.round(25 + norm * 80);
+                const b = Math.round(30);
+                ctx.fillStyle = `rgb(${r},${g},${b})`;
+            } else {
+                const r = Math.round(25);
+                const g = Math.round(25 - norm * 150);
+                const b = Math.round(35 - norm * 220);
+                ctx.fillStyle = `rgb(${r},${g},${b})`;
+            }
+            ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+        }
+    }
+    // Highlight center cell with a subtle white dot
+    const cx = pad * cellSize + cellSize / 2;
+    const cy = pad * cellSize + cellSize / 2;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1.5, cellSize * 0.15), 0, Math.PI * 2);
+    ctx.fill();
 }
 
 async function refreshRuns() {

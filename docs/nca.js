@@ -149,6 +149,19 @@ export class CPUCA {
     this._seeds = weights.seeds || null;
     this._codeCh0 = weights.code_ch0;
     this._codeBits = weights.code_bits;
+    this._kernels = weights.kernels || null;
+    this._basis_kernels = weights.basis_kernels || null;
+    this._w_surround = weights.w_surround || null;
+    this._b_surround = weights.b_surround || null;
+    this._w_x_to_k = weights.w_x_to_k || null;
+    this._b_x_to_k = weights.b_x_to_k || null;
+    this._w_h_to_k = weights.w_h_to_k || null;
+    this._b_h_to_k = weights.b_h_to_k || null;
+    this._temperature = weights.temperature || 0.5;
+    this._num_basis = weights.num_basis || (weights.basis_kernels ? weights.basis_kernels[0].length : 0);
+    this._num_kernels = weights.num_kernels || (weights.basis_kernels ? weights.basis_kernels.length : 2);
+    this._ks = weights.kernel_size || (weights.basis_kernels ? weights.basis_kernels[0][0].length : (weights.kernels ? weights.kernels[0].length : 3));
+
     const f = flattenWeights(weights);
     this._C = f.C;
     this._HN = f.HN;
@@ -162,6 +175,11 @@ export class CPUCA {
     this._plane = plane;
     this._buf = new Float32Array(f.C * plane);
     this._back = new Float32Array(f.C * plane);
+    this._h_state = new Float32Array(f.HN * plane);
+    this._h_next = new Float32Array(f.HN * plane);
+    this._x_bar = new Float64Array(f.C);
+    this._h_bar = new Float64Array(f.HN);
+    this._alpha_layer = new Float64Array(this._num_kernels * this._num_basis);
     this._pre = new Uint8Array(plane);
     this._post = new Uint8Array(plane);
     this._nz = new Uint8Array(plane);   // per-cell "any channel nonzero"
@@ -169,6 +187,77 @@ export class CPUCA {
     this._p = new Float64Array(f.C3);
     this._h = new Float64Array(f.HN);
     this.reset();
+  }
+
+  getKernelAt(gx, gy) {
+    if (!this._basis_kernels || !this._w_surround || !this._b_surround) {
+      if (this._kernels && this._kernels.length >= 2) return this._kernels;
+      return [
+        [[-1/8, 0, 1/8], [-2/8, 0, 2/8], [-1/8, 0, 1/8]],
+        [[-1/8, -2/8, -1/8], [0, 0, 0], [1/8, 2/8, 1/8]]
+      ];
+    }
+    const W = this._W, H = this._H, plane = this._plane;
+    const cur = this._buf;
+    const Nk = this._num_kernels, M = this._num_basis;
+    const basis = this._basis_kernels;
+    const ws = this._w_surround, bs = this._b_surround;
+    const temp = this._temperature;
+    const ks = this._ks;
+
+    const effKernels = [];
+    const all_alphas = [];
+    const all_logits = [];
+    for (let k = 0; k < Nk; k++) {
+      const logits = [];
+      for (let m = 0; m < M; m++) {
+        const idx = k * M + m;
+        let a = (bs[idx] !== undefined ? bs[idx] : 0.0) + (this._alpha_layer ? this._alpha_layer[idx] : 0.0);
+        const w_km = ws[idx];
+        for (let dy = -1; dy <= 1; dy++) {
+          const py = gy + dy;
+          if (py < 0 || py >= H) continue;
+          const rowOff = py * W;
+          for (let dx = -1; dx <= 1; dx++) {
+            const px = gx + dx;
+            if (px < 0 || px >= W) continue;
+            for (let c = 0; c < this._C; c++) {
+              a += w_km[c][dy + 1][dx + 1] * cur[c * plane + rowOff + px];
+            }
+          }
+        }
+        logits.push(a);
+      }
+      all_logits.push(logits);
+
+      let maxL = -Infinity;
+      for (let m = 0; m < M; m++) if (logits[m] > maxL) maxL = logits[m];
+      let sumExp = 0;
+      const alpha_k = [];
+      for (let m = 0; m < M; m++) {
+        const ex = Math.exp((logits[m] - maxL) / temp);
+        alpha_k.push(ex);
+        sumExp += ex;
+      }
+      for (let m = 0; m < M; m++) alpha_k[m] /= sumExp;
+      all_alphas.push(alpha_k);
+
+      const mat = [];
+      for (let u = 0; u < ks; u++) {
+        mat[u] = [];
+        for (let v = 0; v < ks; v++) {
+          let s = 0.0;
+          for (let m = 0; m < M; m++) {
+            s += alpha_k[m] * basis[k][m][u][v];
+          }
+          mat[u][v] = s;
+        }
+      }
+      effKernels.push(mat);
+    }
+    effKernels.alphas = all_alphas;
+    effKernels.logits = all_logits;
+    return effKernels;
   }
 
   get state() { return this._buf; }
@@ -197,11 +286,15 @@ export class CPUCA {
     this._seeds = weights.seeds || null;
     this._codeCh0 = weights.code_ch0;
     this._codeBits = weights.code_bits;
+    this._kernels = weights.kernels || null;
     return true;
   }
 
   reset(noise = false) {
     this.clear();
+    if (this._h_state) this._h_state.fill(0);
+    if (this._h_next) this._h_next.fill(0);
+    if (this._alpha_layer) this._alpha_layer.fill(0);
     
     if (noise) {
         for (let i = 0; i < this._buf.length; i++) {
@@ -305,6 +398,35 @@ export class CPUCA {
     this._aliveMask(cur, pre);
     const nbnz = this._nonzeroDilated(cur);
 
+    // Global modulation layer for dynamic kernel NCA
+    const Nk = this._num_kernels, M = this._num_basis;
+    const wx = this._w_x_to_k, bx = this._b_x_to_k;
+    const wh = this._w_h_to_k, bh = this._b_h_to_k;
+    const hState = this._h_state, hNext = this._h_next;
+
+    if (this._basis_kernels && wx && bx && wh && bh) {
+      for (let c = 0; c < C; c++) {
+        let sum = 0;
+        const off = c * plane;
+        for (let i = 0; i < plane; i++) sum += cur[off + i];
+        this._x_bar[c] = sum / plane;
+      }
+      for (let k = 0; k < HN; k++) {
+        let sum = 0;
+        const off = k * plane;
+        for (let i = 0; i < plane; i++) sum += hState[off + i];
+        this._h_bar[k] = sum / plane;
+      }
+      const x_bar = this._x_bar, h_bar = this._h_bar;
+      for (let idx = 0; idx < Nk * M; idx++) {
+        let a = bx[idx] + bh[idx];
+        const wx_row = wx[idx], wh_row = wh[idx];
+        for (let c = 0; c < C; c++) a += wx_row[c] * x_bar[c];
+        for (let k = 0; k < HN; k++) a += wh_row[k] * h_bar[k];
+        this._alpha_layer[idx] = a;
+      }
+    }
+
     for (let y = 0; y < H; y++) {
       const yu = y > 0, yd = y < H - 1;
       for (let x = 0; x < W; x++) {
@@ -312,14 +434,30 @@ export class CPUCA {
         const fired = rand() <= fireRate;
         if (!fired) {
           for (let c = 0; c < C; c++) nxt[c * plane + i] = cur[c * plane + i];
+          if (hNext && hState) {
+            for (let k = 0; k < HN; k++) hNext[k * plane + i] = hState[k * plane + i];
+          }
           continue;
         }
         if (!nbnz[i]) {
           // Entire 3x3 neighborhood is zero: perception is exactly 0.
           for (let c = 0; c < C; c++) nxt[c * plane + i] = cur[c * plane + i] + dxZero[c];
+          if (hNext) {
+            for (let k = 0; k < HN; k++) hNext[k * plane + i] = 0;
+          }
           continue;
         }
         const xl = x > 0, xr = x < W - 1;
+        let k0 = null, k1 = null, ks = 3, pad = 1;
+        if (this._basis_kernels && this._w_surround && this._b_surround) {
+          const eff = this.getKernelAt(x, y);
+          k0 = eff[0]; k1 = eff[1];
+          ks = this._ks; pad = Math.floor(ks / 2);
+        } else if (this._kernels && this._kernels.length >= 2) {
+          k0 = this._kernels[0]; k1 = this._kernels[1];
+          ks = k0.length; pad = Math.floor(ks / 2);
+        }
+
         for (let c = 0; c < C; c++) {
           const b = c * plane + i;
           const vC = cur[b];
@@ -338,14 +476,44 @@ export class CPUCA {
             if (xr) vDR = cur[bd + 1];
           }
           p[c] = vC;
-          p[C + c] = (vUR + 2 * vR + vDR - vUL - 2 * vL - vDL) * 0.125;
-          p[2 * C + c] = (vDL + 2 * vD + vDR - vUL - 2 * vU - vUR) * 0.125;
+          if (k0 && k1) {
+            if (ks === 3) {
+              p[C + c] = k0[0][0] * vUL + k0[0][1] * vU + k0[0][2] * vUR +
+                         k0[1][0] * vL  + k0[1][1] * vC + k0[1][2] * vR  +
+                         k0[2][0] * vDL + k0[2][1] * vD + k0[2][2] * vDR;
+              p[2 * C + c] = k1[0][0] * vUL + k1[0][1] * vU + k1[0][2] * vUR +
+                             k1[1][0] * vL  + k1[1][1] * vC + k1[1][2] * vR  +
+                             k1[2][0] * vDL + k1[2][1] * vD + k1[2][2] * vDR;
+            } else {
+              let s0 = 0, s1 = 0;
+              for (let dy = -pad; dy <= pad; dy++) {
+                const py = y + dy;
+                if (py < 0 || py >= H) continue;
+                const rowOff = c * plane + py * W;
+                const rowK = dy + pad;
+                for (let dx = -pad; dx <= pad; dx++) {
+                  const px = x + dx;
+                  if (px < 0 || px >= W) continue;
+                  const val = cur[rowOff + px];
+                  s0 += k0[rowK][dx + pad] * val;
+                  s1 += k1[rowK][dx + pad] * val;
+                }
+              }
+              p[C + c] = s0;
+              p[2 * C + c] = s1;
+            }
+          } else {
+            p[C + c] = (vUR + 2 * vR + vDR - vUL - 2 * vL - vDL) * 0.125;
+            p[2 * C + c] = (vDL + 2 * vD + vDR - vUL - 2 * vU - vUR) * 0.125;
+          }
         }
         for (let k = 0; k < HN; k++) {
           let s = b0[k];
           const off = k * C3;
           for (let j = 0; j < C3; j++) s += w0[off + j] * p[j];
-          hbuf[k] = s > 0 ? s : 0;
+          const hv = s > 0 ? s : 0;
+          hbuf[k] = hv;
+          if (hNext) hNext[k * plane + i] = hv;
         }
         for (let c = 0; c < C; c++) {
           let s = 0;
@@ -361,10 +529,17 @@ export class CPUCA {
     for (let i = 0; i < plane; i++) {
       if (!(pre[i] && post[i])) {
         for (let c = 0; c < C; c++) nxt[c * plane + i] = 0;
+        if (hNext) {
+          for (let k = 0; k < HN; k++) hNext[k * plane + i] = 0;
+        }
       }
     }
     this._back = cur;
     this._buf = nxt;
+    if (hState && hNext) {
+      this._h_state = hNext;
+      this._h_next = hState;
+    }
   }
 
   readRGBA(out) {
@@ -410,7 +585,13 @@ void main() {
 }
 `;
 
-function buildUpdateFS(T, HN) {
+function fmtGLSL(v) {
+  let s = Number(v).toFixed(6);
+  if (!s.includes('.')) s += '.0';
+  return s;
+}
+
+function buildUpdateFS(T, HN, kernels = null) {
   let s = `#version 300 es
 precision highp float;
 precision highp int;
@@ -446,9 +627,35 @@ void main() {
   vec4 nDL${t} = f${t}(xy + ivec2(-1, 1));
   vec4 nD${t}  = f${t}(xy + ivec2( 0, 1));
   vec4 nDR${t} = f${t}(xy + ivec2( 1, 1));
-  vec4 sx${t} = (nUR${t} + 2.0*nR${t} + nDR${t} - nUL${t} - 2.0*nL${t} - nDL${t}) * 0.125;
-  vec4 sy${t} = (nDL${t} + 2.0*nD${t} + nDR${t} - nUL${t} - 2.0*nU${t} - nUR${t}) * 0.125;
 `;
+    if (kernels && kernels.length >= 2) {
+      const k0 = kernels[0], k1 = kernels[1];
+      const ks = k0.length;
+      const pad = Math.floor(ks / 2);
+      if (ks === 3) {
+        s += `  vec4 sx${t} = (${fmtGLSL(k0[0][0])}*nUL${t} + ${fmtGLSL(k0[0][1])}*nU${t} + ${fmtGLSL(k0[0][2])}*nUR${t} + ${fmtGLSL(k0[1][0])}*nL${t} + ${fmtGLSL(k0[1][1])}*nC${t} + ${fmtGLSL(k0[1][2])}*nR${t} + ${fmtGLSL(k0[2][0])}*nDL${t} + ${fmtGLSL(k0[2][1])}*nD${t} + ${fmtGLSL(k0[2][2])}*nDR${t});\n`;
+        s += `  vec4 sy${t} = (${fmtGLSL(k1[0][0])}*nUL${t} + ${fmtGLSL(k1[0][1])}*nU${t} + ${fmtGLSL(k1[0][2])}*nUR${t} + ${fmtGLSL(k1[1][0])}*nL${t} + ${fmtGLSL(k1[1][1])}*nC${t} + ${fmtGLSL(k1[1][2])}*nR${t} + ${fmtGLSL(k1[2][0])}*nDL${t} + ${fmtGLSL(k1[2][1])}*nD${t} + ${fmtGLSL(k1[2][2])}*nDR${t});\n`;
+      } else {
+        let sxTerms = [], syTerms = [];
+        for (let dy = -pad; dy <= pad; dy++) {
+          for (let dx = -pad; dx <= pad; dx++) {
+            const w0 = k0[dy + pad][dx + pad];
+            const w1 = k1[dy + pad][dx + pad];
+            if (Math.abs(w0) > 1e-6) {
+              sxTerms.push(`${fmtGLSL(w0)} * f${t}(xy + ivec2(${dx}, ${dy}))`);
+            }
+            if (Math.abs(w1) > 1e-6) {
+              syTerms.push(`${fmtGLSL(w1)} * f${t}(xy + ivec2(${dx}, ${dy}))`);
+            }
+          }
+        }
+        s += `  vec4 sx${t} = ${sxTerms.length ? sxTerms.join(' + ') : 'vec4(0.0)'};\n`;
+        s += `  vec4 sy${t} = ${syTerms.length ? syTerms.join(' + ') : 'vec4(0.0)'};\n`;
+      }
+    } else {
+      s += `  vec4 sx${t} = (nUR${t} + 2.0*nR${t} + nDR${t} - nUL${t} - 2.0*nL${t} - nDL${t}) * 0.125;\n`;
+      s += `  vec4 sy${t} = (nDL${t} + 2.0*nD${t} + nDR${t} - nUL${t} - 2.0*nU${t} - nUR${t}) * 0.125;\n`;
+    }
   }
   s += `  float hb[${HN}];
   for (int k = 0; k < ${HN}; k++) {
@@ -604,6 +811,7 @@ export class GLCA {
     this._w1Tex = makeWeightTex(gl, HN, T, packW1(f, T));
 
     // --- Programs ---
+    this._kernels = weights.kernels || null;
     this._buildUpdateProgram(HN);
     this._progM = compileProgram(gl, VS, buildMaskFS(T));
     gl.useProgram(this._progM);
@@ -625,7 +833,7 @@ export class GLCA {
   _buildUpdateProgram(HN) {
     const gl = this.gl, T = this._T;
     if (this._progU) gl.deleteProgram(this._progU);
-    this._progU = compileProgram(gl, VS, buildUpdateFS(T, HN));
+    this._progU = compileProgram(gl, VS, buildUpdateFS(T, HN, this._kernels));
     gl.useProgram(this._progU);
     for (let t = 0; t < T; t++) gl.uniform1i(gl.getUniformLocation(this._progU, `uS${t}`), t);
     gl.uniform1i(gl.getUniformLocation(this._progU, "uW0"), T);
@@ -641,9 +849,10 @@ export class GLCA {
     const gl = this.gl, T = this._T;
     const dims = gridDims(weights);
     if (weights.channel_n !== this._C || dims.W !== this._W || dims.H !== this._H) return false;
+    this._kernels = weights.kernels || null;
     const f = flattenWeights(weights);
     const packed0 = packW0(f, T);
-    if (f.HN !== this._HN) {
+    if (f.HN !== this._HN || weights.kernels) {
       // texStorage2D sizes are immutable and both textures are sized by
       // hidden_n, so they have to be replaced rather than re-uploaded.
       gl.deleteTexture(this._w0Tex);
@@ -878,7 +1087,8 @@ export class GLCA {
 // ---------------------------------------------------------------------------
 
 export function createCA(weights, opts = {}) {
-  if (!opts.forceCPU) {
+  const isDynamic = weights.kind === 'dynamic_kernel_nca' || Boolean(weights.basis_kernels);
+  if (!opts.forceCPU && !isDynamic) {
     try {
       let gl = opts.gl || null;
       if (!gl) {
