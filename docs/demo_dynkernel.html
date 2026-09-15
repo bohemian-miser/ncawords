@@ -377,36 +377,241 @@
 </div>
 
 <div class="article-column">
-  <h2>How It Works</h2>
+  <h2>The Architecture of Learned &amp; Dynamic Kernels</h2>
   <p>
-    Standard Neural Cellular Automata use fixed $3\times3$ Sobel filters for spatial perception.
-    In contrast, our <strong>Dynamic Layer-Modulated Kernel NCA</strong> evaluates a dynamic mixture of
-    basis filters (directional derivatives, Laplacian rings, and center-surround diffusions) at each cell:
+    Standard Neural Cellular Automata (<a href="https://distill.pub/2020/growing-ca/">Mordvintsev et al., Distill 2020</a>)
+    rely on fixed, handcrafted $3\times3$ Sobel filters for perception. While elegant, hardcoding spatial derivatives creates an
+    artificial bottleneck: the network cannot adapt its receptive field, cannot sense long-range curvature, and applies the exact same
+    spatial filter regardless of whether a cell sits on an outer membrane, deep in the interior tissue, or out in empty space.
   </p>
-  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.85rem;">
-&alpha;<sub>m</sub>(y, x) = Softmax( Conv2d<sub>3&times;3</sub>(state, W<sub>surround</sub>) + W<sub>x</sub> x̄ + W<sub>h</sub> h̄ )
-K<sub>eff</sub>(y, x) = &sum;<sub>m</sub> &alpha;<sub>m</sub>(y, x) &middot; Basis<sub>m</sub></pre>
   <p>
-    This allows the organism to employ completely different spatial filters along its outer perimeter
-    (boundary preservation and edge detection), deep inside its body (stabilizing diffusion), and across empty space.
+    Our research explores the evolution from hardcoded perception to <strong>Trainable Spatial Kernels</strong> and ultimately to
+    <strong>Dynamic Layer-Modulated Kernel NCA</strong>. Below is a detailed breakdown of the architecture, its mathematical foundation,
+    and why it enables spontaneous self-organization from pure noise.
   </p>
 
-  <h3>The Spatial Interpolation Trick</h3>
+  <h3>1. From Fixed Sobel to Dynamic Per-Cell Perception</h3>
   <p>
-    Because both models operate on identical 16-channel representations ($C=16, HN=128$), their proposed updates
-    $dx_A$ and $dx_B$ exist in the same vector space. A scalar control field $B(x, y) \in [0, 1]$ smoothly interpolates
-    between them:
+    Consider the progression of spatial perception mechanisms in Neural Cellular Automata:
   </p>
-  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.85rem;">
+  <ul>
+    <li>
+      <strong>Classic Sobel NCA (Fixed 3&times;3)</strong>:
+      Perception is $p(x, y) = [x, \text{Sobel}_x \ast x, \text{Sobel}_y \ast x]$. Because the filters are fixed constants,
+      all spatial reasoning is forced into $1\times1$ pointwise convolutions in the subsequent MLP. The model cannot coordinate
+      anisotropic growth directions or long-range boundary curvature.
+    </li>
+    <li>
+      <strong>Trainable Kernel NCA (Learned 5&times;5)</strong>:
+      Replaces Sobel constants with gradient-trainable $5\times5$ convolutional kernels $K_0, K_1$. Through backpropagation,
+      the system learns specialized concentric rings and diffusion filters. However, the kernels remain <em>spatially invariant</em> &mdash;
+      every cell in the universe sees through the exact same spatial lens.
+    </li>
+    <li>
+      <strong>Dynamic Layer-Modulated Kernel NCA (Our Architecture)</strong>:
+      Eliminates spatial invariance. Each cell $(y, x)$ dynamically synthesizes its own effective spatial perception filters
+      $K_{\text{eff}}(y, x)$ at every time step, conditioned on its local surrounding $3\times3$ neighborhood and global network layers.
+    </li>
+  </ul>
+
+  <!-- Architecture Flow Diagram -->
+  <div style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:8px; padding:1.2rem 1.4rem; margin:1.6rem 0; font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace; font-size:0.78rem; line-height:1.45; overflow-x:auto;">
+    <div style="font-weight:bold; color:var(--link); margin-bottom:0.8rem; font-family:sans-serif; font-size:0.88rem;">Architecture Pipeline: Dynamic Kernel Synthesis &amp; Perception</div>
+┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+│ 16-Channel State Grid: x ∈ ℝ^(16 × H × W)                                                   │
+└───────┬───────────────────────────────────┬─────────────────────────────────────────┬───────┘
+        │                                   │                                         │
+        ▼ [Local Surrounding Patch]         ▼ [Spatial Mean Pooling]                  │
+  Conv2d_3x3(x, W_surround)           x̄ = (1/N) ∑ x(u,v)                              │
+        │                                   │                                         │
+        │                             W_x · x̄ + b_x                                   │
+        │                                   │                                         │
+        ▼                                   ▼                                         │
+  Local Logits + Global Modulation: L_km(y, x) = Conv_surround + W_x x̄ + W_h h̄       │
+        │                                                                             │
+        ▼                                                                             │
+  Softmax Mixture Weights: α_km(y, x) = exp(L_km / T) / ∑ exp(L_km' / T)              │
+        │                                                                             │
+        ▼                                                                             │
+  Effective Kernel: K_eff,k(y, x) = ∑_m α_km(y, x) · Basis_km  (5×5 per-cell)         │
+        │                                                                             │
+        └───────────────────────────────┬─────────────────────────────────────────────┘
+                                        ▼
+             Depthwise Spatial Perception: p_dyn(y, x) = (K_eff * x)(y, x)
+                                        │
+                                        ▼
+             Perception Vector: p(y, x) = [x(y, x),  K_eff,0 * x,  K_eff,1 * x]  ∈ ℝ^48
+                                        │
+                                        ▼
+             Hidden Layer:      h(y, x) = ReLU( fc0_w · p(y, x) + fc0_b )        ∈ ℝ^128
+                                        │
+                                        ▼
+             Proposed Update:  dx(y, x) = fc1_w · h(y, x)                        ∈ ℝ^16
+                                        │
+                                        ▼
+             Stochastic Update: x(y, x) ← x(y, x) + fire(y, x) · dx(y, x)
+  </div>
+
+  <h3>2. Mathematical Formulation</h3>
+  <p>
+    The dynamic perception layer operates in three stages:
+  </p>
+  
+  <p><strong>Stage A: Local &amp; Global Gating Logits</strong></p>
+  <p>
+    To determine which spatial filters a cell needs, a lightweight $3\times3$ convolution inspects the immediate
+    neighborhood of the 16 channels, while global pooled state vectors $\bar{x} \in \mathbb{R}^{16}$ and
+    $\bar{h} \in \mathbb{R}^{128}$ provide whole-organism scale and phase context:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
+L<sub>k,m</sub>(y, x) = &sum;<sub>c=0</sub><sup>C-1</sup> &sum;<sub>dy,dx=-1</sub><sup>1</sup> W<sub>surround</sub>[k&middot;M+m, c, dy+1, dx+1] &middot; x[c, y+dy, x+dx] + b<sub>surround</sub>[k&middot;M+m] + (W<sub>x</sub> x̄ + W<sub>h</sub> h̄)<sub>k&middot;M+m</sub></pre>
+
+  <p><strong>Stage B: Normalized Basis Gating</strong></p>
+  <p>
+    A temperature-scaled Softmax transforms the logits into a valid probability distribution over the $M=4$ basis filters:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
+&alpha;<sub>k,m</sub>(y, x) = exp( L<sub>k,m</sub>(y, x) / T ) / &sum;<sub>m'=0</sub><sup>M-1</sup> exp( L<sub>k,m'</sub>(y, x) / T )</pre>
+
+  <p><strong>Stage C: Dynamic Kernel Composition</strong></p>
+  <p>
+    The cell&rsquo;s spatial perception filter $K_{\text{eff}, k}(y, x) \in \mathbb{R}^{5 \times 5}$ is synthesized as a linear combination of the basis primitives:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
+K<sub>eff,k</sub>(y, x) = &sum;<sub>m=0</sub><sup>M-1</sup> &alpha;<sub>k,m</sub>(y, x) &middot; Basis<sub>k,m</sub></pre>
+
+  <h3>3. The Four Spatial Basis Primitives</h3>
+  <p>
+    Rather than learning from unconstrained random matrices, the $M=4$ basis filters are initialized with fundamental differential operators
+    that give the cellular system orthogonal sensory capabilities:
+  </p>
+  <div style="overflow-x:auto; margin:1.2rem 0;">
+    <table style="width:100%; border-collapse:collapse; font-size:0.86rem; text-align:left;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--rule);">
+          <th style="padding:8px;">Basis</th>
+          <th style="padding:8px;">Primitive Operator</th>
+          <th style="padding:8px;">Physical Function in Organism</th>
+          <th style="padding:8px;">Inspector Color</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Basis 0</td>
+          <td style="padding:8px;">Directional Derivative (Sobel/Steer)</td>
+          <td style="padding:8px;">Detects directional gradient flow; guides locomotion and asymmetric appendages.</td>
+          <td style="padding:8px; color:#4db8ff;">Cyan</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Basis 1</td>
+          <td style="padding:8px;">Discrete Laplacian ($\nabla^2$)</td>
+          <td style="padding:8px;">Measures 2nd-order surface curvature; zero in flat regions, fires strongly at perimeter borders.</td>
+          <td style="padding:8px; color:#66dd66;">Green</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Basis 2</td>
+          <td style="padding:8px;">Gaussian Ring / Bandpass</td>
+          <td style="padding:8px;">Tuning filter selecting spatial wavelength; prevents structural collapse into solid blocks.</td>
+          <td style="padding:8px; color:#ffaa00;">Yellow/Orange</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Basis 3</td>
+          <td style="padding:8px;">Center-Surround / Orthogonal</td>
+          <td style="padding:8px;">Inhibitory surround / excitatory center; stabilizes interior cellular homeostasis.</td>
+          <td style="padding:8px; color:#ff5555;">Red</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    When hovering over the live inspector above, the bar graphs under each kernel display these exact mixture weights
+    $\alpha_0, \alpha_1, \alpha_2, \alpha_3$ in real time. Notice how the green Laplacian weight surges when you cross the boundary
+    of an organism!
+  </p>
+
+  <h3>4. Constant $O(1)$ Memory Footprint During Training</h3>
+  <p>
+    A persistent hurdle with dynamic neural networks is memory complexity. A naive spatial hypernetwork predicting a distinct
+    $5\times5$ filter per pixel would generate $5 \times 5 \times 2 = 50$ weights per cell. For a batch of 16 boards over 64 unrolled
+    training steps, storing these intermediate weight tensors causes immediate out-of-memory crashes on modern GPUs ($O(B \cdot T \cdot H \cdot W \cdot K)$).
+  </p>
+  <p>
+    Our architecture resolves this by exploiting the <strong>distributive linearity of convolution</strong>:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
+( &sum;<sub>m</sub> &alpha;<sub>m</sub>(y, x) &middot; Basis<sub>m</sub> ) &ast; state  &equiv;  &sum;<sub>m</sub> &alpha;<sub>m</sub>(y, x) &middot; ( Basis<sub>m</sub> &ast; state )</pre>
+  <p>
+    During the backward pass in PyTorch, we convolve the input with the 4 static basis kernels first (depthwise 2D convolution),
+    and then compute the pointwise dot product with the scalar mixture weights $\alpha_m(y, x)$. This maintains a strict
+    <strong>$O(1)$ memory footprint</strong> with respect to kernel size and step depth.
+  </p>
+
+  <h3>5. Architectural Comparison</h3>
+  <div style="overflow-x:auto; margin:1.2rem 0;">
+    <table style="width:100%; border-collapse:collapse; font-size:0.85rem; text-align:left;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--rule);">
+          <th style="padding:8px;">Model Class</th>
+          <th style="padding:8px;">Perception Kernel</th>
+          <th style="padding:8px;">Spatial Adaptability</th>
+          <th style="padding:8px;">Noise Condensation</th>
+          <th style="padding:8px;">Relative FLOPs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Classic Sobel NCA</td>
+          <td style="padding:8px;">Fixed $3\times3$ Sobel</td>
+          <td style="padding:8px;">Zero (Homogeneous)</td>
+          <td style="padding:8px;">Fails (Requires seed)</td>
+          <td style="padding:8px;">1.0&times; (baseline)</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Trainable Kernel NCA</td>
+          <td style="padding:8px;">Learned $5\times5$ fixed</td>
+          <td style="padding:8px;">Zero (Homogeneous)</td>
+          <td style="padding:8px;">Moderate (Fragile)</td>
+          <td style="padding:8px;">1.35&times;</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--rule);">
+          <td style="padding:8px; font-weight:600;">Dynamic Layer-Modulated NCA</td>
+          <td style="padding:8px;">Dynamic $5\times5$ synthesized</td>
+          <td style="padding:8px;"><strong>Full Per-Cell Gating</strong></td>
+          <td style="padding:8px;"><strong>Robust Nucleation</strong></td>
+          <td style="padding:8px;">1.60&times;</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>6. The Spatial Interpolation Trick</h3>
+  <p>
+    Because all models share identical 16-channel and 128-hidden dimensions, their proposed updates $dx_A$ and $dx_B$ exist in the same
+    tangent space. Naively interpolating model parameters ($W_{\text{blend}} = (1-\alpha) W_A + \alpha W_B$) destroys the delicate non-linear
+    attractor dynamics, causing immediate death.
+  </p>
+  <p>
+    Instead, our <strong>spatial update interpolation trick</strong> evaluates both models independently and blends their infinitesimal
+    velocity proposals locally:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
 dx(x, y) = (1 - B(x, y)) &middot; dx<sub>A</sub>(x, y) + B(x, y) &middot; dx<sub>B</sub>(x, y)
 x(x, y) &larr; x(x, y) + fire &middot; dx(x, y)</pre>
-
-  <h3>Spontaneous Nucleation from Pure Noise</h3>
   <p>
-    The new emoji models were trained on GPU from <strong>pure random noise</strong> rather than an artificial single seed pixel.
-    Clicking <strong>Fill Pure Noise</strong> fills the grid with chaotic random values. Over the course of 50&ndash;100 steps,
-    you will observe the left side spontaneously condense into Model A (e.g. Fire) while the right side condenses into Model B (e.g. Rocket),
-    with an active morphological battle and chimera frontier along the interpolation boundary!
+    Because $dx$ represents an instantaneous velocity field, its convex combination forms a well-behaved continuous dynamical system.
+    Along the transition boundary ($B \approx 0.5$), you can observe chimeras: the fire organism adopts the structural body contour
+    of the rocket, or gecko limbs merge smoothly into alien tentacles!
+  </p>
+
+  <h3>7. Spontaneous Nucleation from Pure Noise</h3>
+  <p>
+    Unlike conventional NCAs that must be primed with an isolated seed pixel, our new models were trained with
+    continuous sample pool resets starting from uniform random noise $\mathcal{U}(0, 1)$. Clicking <strong>Fill Pure Noise</strong>
+    shuffles all 16 channels into random static.
+  </p>
+  <p>
+    Watch the system: within 40&ndash;80 steps, cells self-coordinate, extinguish high-entropy background noise, and nucleate into
+    stable living forms matching the spatial rule boundaries painted in $B(x, y)$.
   </p>
 </div>
 
