@@ -11,6 +11,10 @@
   .figure-column {
     max-width: min(1520px, 98vw);
   }
+  .figure-column.diagram-column {
+    max-width: 960px;
+    margin: 2.5rem auto;
+  }
   .demo-canvas-wrap {
     display: flex;
     justify-content: center;
@@ -235,13 +239,11 @@
 <header class="masthead">
   <div class="article-column">
     <p class="kicker">Interactive demo</p>
-    <h1>Dynamic Kernel NCA &mdash; Physics Interpolation &amp; Organism Comparison</h1>
+    <h1>Dynamic Kernel NCA &mdash; Organism Comparison &amp; Physics Interpolation</h1>
     <p class="subtitle">
-      In our <strong>Dynamic Layer-Modulated Kernel NCA</strong> architecture, every cell dynamically
-      synthesizes its 5&times;5 spatial perception filters from a basis modulated by its surrounding state.
-      This demo lets you compare these models side-by-side on a shared 16-channel grid using the
-      <strong>interpolation trick</strong>: a painted control field $B(x, y)$ smoothly interpolates between
-      Model A and Model B cell-by-cell ($dx = (1-B) dx_A + B dx_B$).
+      Two organisms, one shared 16-channel world. Each cell computes its own
+      spatial filters on the fly and updates locally. A painted control field
+      smoothly interpolates between both physics rules cell by cell.
     </p>
   </div>
 </header>
@@ -374,10 +376,11 @@
     </div>
 
     <figcaption>
-      <b>Two Dynamic Kernel models, one shared world.</b> Both models share the exact same 16-channel state grid.
-      At every step, each cell evaluates its local dynamic spatial filters, queries both models for update proposals,
-      and applies a blended step weighted by the painted control field $B(x, y)$. Hovering your mouse over any cell
-      displays the synthesized 5&times;5 perception kernels and active basis mixture weights in real time.
+      <b>Two organisms, one shared grid.</b> Both models operate on the same
+      16-channel state space. At every step, each cell queries both models for
+      their proposed updates and applies a blended step weighted by the painted
+      control field <em>B(x, y)</em>. Hover over any cell to inspect its active
+      5&times;5 perception kernel and mixture weights in real time.
     </figcaption>
 
     <p class="demo-legend" style="margin-top:1.4rem">
@@ -389,261 +392,274 @@
   </figure>
 </div>
 
-<div class="article-column">
-  <h2>Architecture: The NCA, The Perception Kernel &amp; The MLP</h2>
+<section class="article-column">
+  <h2>The per-cell update rule</h2>
   <p>
-    A Neural Cellular Automaton (NCA) is a continuous dynamical system on a 2D lattice.
-    Every pixel holds a 16-channel state vector $x \in \mathbb{R}^{16}$ (channels 0&ndash;2: RGB color, channel 3: $\alpha$ opacity,
-    channels 4&ndash;15: hidden chemical channels). Crucially, there are no global coordinate inputs ($x, y$);
-    <strong>every cell runs the exact same local update rule in parallel</strong>.
+    Every cell carries a state vector of 16 numbers. The first three are RGB,
+    the fourth is an &ldquo;aliveness&rdquo; alpha, and the remaining twelve
+    are hidden chemical channels. There are no global coordinates; every cell
+    runs the exact same ~8,000-parameter rule in parallel.
   </p>
-
-  <!-- DIAGRAM 1: The NCA Per-Cell Update Loop & MLP -->
-  <h3>1. The NCA Per-Cell Update Engine</h3>
   <p>
-    At every time step, each cell updates its state through three compact stages:
-    <strong>Spatial Perception</strong>, a <strong>Pointwise 2-Layer MLP</strong>, and a <strong>Stochastic Residual Addition</strong>.
+    An update step proceeds in three stages. First, <em>perception</em>: each
+    channel is filtered with the cell&rsquo;s current state and two dynamic
+    spatial convolutions, yielding a 48-number summary of the cell and its
+    surroundings. That vector passes through a two-layer pointwise MLP
+    (48 &rarr; 128 &rarr; 16, ReLU) whose final layer is zero-initialized so
+    an untrained network changes nothing. The output is a proposed velocity
+    &#916;x.
   </p>
+  <p>
+    Cells update asynchronously: each cell fires with probability 0.5 per step,
+    adding its proposed &#916;x to its state. This stochastic clock prevents
+    artificial synchronization across the grid.
+  </p>
+</section>
 
-  <div class="diagram-wrap" style="margin: 1.4rem 0;">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 200" role="img" aria-label="NCA per-cell update engine diagram">
-      <defs>
-        <marker id="arr1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 1 L 8 5 L 0 9 z" fill="#8a8f98"></path>
-        </marker>
-      </defs>
-      <!-- Block 1: Cell State x -->
-      <g transform="translate(16, 26)">
-        <g transform="translate(25, 6)">
-          <rect x="0" y="0" width="14" height="14" class="dg-box"></rect>
-          <rect x="16" y="0" width="14" height="14" class="dg-box"></rect>
-          <rect x="32" y="0" width="14" height="14" class="dg-box"></rect>
-          <rect x="0" y="16" width="14" height="14" class="dg-box"></rect>
-          <rect x="16" y="16" width="14" height="14" style="fill:#1a8cff;"></rect>
-          <rect x="32" y="16" width="14" height="14" class="dg-box"></rect>
-          <rect x="0" y="32" width="14" height="14" class="dg-box"></rect>
-          <rect x="16" y="32" width="14" height="14" class="dg-box"></rect>
-          <rect x="32" y="32" width="14" height="14" class="dg-box"></rect>
+<div class="figure-column diagram-column">
+  <figure id="fig-rule">
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 880 272" role="img" xmlns="http://www.w3.org/2000/svg"
+           aria-label="Architecture of the per-cell update rule: 3x3 neighborhood, dynamic perception, 2-layer MLP, stochastic gating, residual add, and alpha viability.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="dg-arrowhead"></path>
+          </marker>
+        </defs>
+
+        <!-- Row 1: Neighborhood -> Perception -> Dense 128 -> Dense 16 -->
+        <g>
+          <!-- 3x3 neighborhood icon -->
+          <g transform="translate(20, 22)">
+            <rect x="0"  y="0"  width="20" height="20" class="dg-box"></rect>
+            <rect x="22" y="0"  width="20" height="20" class="dg-box"></rect>
+            <rect x="44" y="0"  width="20" height="20" class="dg-box"></rect>
+            <rect x="0"  y="22" width="20" height="20" class="dg-box"></rect>
+            <rect x="22" y="22" width="20" height="20" class="dg-box dg-accent" stroke-width="2"></rect>
+            <rect x="44" y="22" width="20" height="20" class="dg-box"></rect>
+            <rect x="0"  y="44" width="20" height="20" class="dg-box"></rect>
+            <rect x="22" y="44" width="20" height="20" class="dg-box"></rect>
+            <rect x="44" y="44" width="20" height="20" class="dg-box"></rect>
+          </g>
+          <text x="52" y="104" font-size="12" font-weight="600" text-anchor="middle">3&#215;3 neighborhood</text>
+          <text x="52" y="120" font-size="10.5" class="dg-sub" text-anchor="middle">16 channels / cell</text>
+
+          <path d="M 92 54 H 144" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <!-- Perception -->
+          <rect x="148" y="18" width="176" height="72" rx="8" class="dg-box"></rect>
+          <text x="236" y="42" font-size="13" font-weight="600" text-anchor="middle">Perception</text>
+          <text x="236" y="60" font-size="10.5" class="dg-sub" text-anchor="middle">identity (16)</text>
+          <text x="236" y="75" font-size="10.5" class="dg-sub" text-anchor="middle">+ dynamic K&#8320;, K&#8321; (32)</text>
+
+          <path d="M 324 54 H 378" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="351" y="45" font-size="11" class="dg-sub" text-anchor="middle">48</text>
+
+          <!-- Dense 128 -->
+          <rect x="382" y="18" width="152" height="72" rx="8" class="dg-box"></rect>
+          <text x="458" y="44" font-size="13" font-weight="600" text-anchor="middle">Dense 128</text>
+          <text x="458" y="64" font-size="11" class="dg-sub" text-anchor="middle">1&#215;1 conv, ReLU</text>
+
+          <path d="M 534 54 H 588" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="561" y="45" font-size="11" class="dg-sub" text-anchor="middle">128</text>
+
+          <!-- Dense 16 -->
+          <rect x="592" y="18" width="152" height="72" rx="8" class="dg-box"></rect>
+          <text x="668" y="44" font-size="13" font-weight="600" text-anchor="middle">Dense 16</text>
+          <text x="668" y="64" font-size="11" class="dg-sub" text-anchor="middle">1&#215;1 conv, zero-init</text>
         </g>
-        <text x="48" y="72" font-size="12" font-weight="700" text-anchor="middle">Cell State x</text>
-        <text x="48" y="88" font-size="10" class="dg-sub" text-anchor="middle">16 channels</text>
-        <text x="48" y="102" font-size="9" class="dg-sub" text-anchor="middle">RGB + &alpha; + 12h</text>
-      </g>
-      <!-- Arrow 1 -> 2 -->
-      <path d="M 120 54 H 152" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr1)"></path>
-      <!-- Block 2: Spatial Perception -->
-      <g transform="translate(158, 14)">
-        <rect x="0" y="0" width="164" height="102" rx="8" class="dg-box" style="stroke:#1a8cff; stroke-width:1.5px;"></rect>
-        <text x="82" y="26" font-size="12" font-weight="700" text-anchor="middle" fill="#1a8cff">Spatial Perception</text>
-        <text x="82" y="46" font-size="10.5" class="dg-sub" text-anchor="middle">Identity &middot; x (16)</text>
-        <text x="82" y="62" font-size="10.5" class="dg-sub" text-anchor="middle">Kernel 0 &ast; x (16)</text>
-        <text x="82" y="78" font-size="10.5" class="dg-sub" text-anchor="middle">Kernel 1 &ast; x (16)</text>
-        <text x="82" y="94" font-size="10" font-weight="600" text-anchor="middle">Vector p &in; &#8477;^48</text>
-      </g>
-      <!-- Arrow 2 -> 3 -->
-      <path d="M 326 65 H 358" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr1)"></path>
-      <!-- Block 3: 2-Layer MLP -->
-      <g transform="translate(364, 14)">
-        <rect x="0" y="0" width="184" height="102" rx="8" class="dg-box" style="stroke:#d97706; stroke-width:1.5px;"></rect>
-        <text x="92" y="26" font-size="12" font-weight="700" text-anchor="middle" fill="#d97706">2-Layer Dense MLP</text>
-        <text x="92" y="46" font-size="10.5" class="dg-sub" text-anchor="middle">FC0: 48 &rarr; 128 (ReLU)</text>
-        <text x="92" y="63" font-size="10.5" class="dg-sub" text-anchor="middle">Hidden h &in; &#8477;^128</text>
-        <text x="92" y="80" font-size="10.5" class="dg-sub" text-anchor="middle">FC1: 128 &rarr; 16 (Linear)</text>
-        <text x="92" y="95" font-size="9.5" font-weight="600" text-anchor="middle">Velocity &Delta;x &in; &#8477;^16</text>
-      </g>
-      <!-- Arrow 3 -> 4 -->
-      <path d="M 552 65 H 584" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr1)"></path>
-      <!-- Block 4: Stochastic Fire Gate -->
-      <g transform="translate(590, 14)">
-        <rect x="0" y="0" width="130" height="102" rx="8" class="dg-box"></rect>
-        <text x="65" y="26" font-size="12" font-weight="700" text-anchor="middle">Stochastic Gate</text>
-        <text x="65" y="48" font-size="10.5" class="dg-sub" text-anchor="middle">Bernoulli p = 0.5</text>
-        <text x="65" y="66" font-size="9.5" class="dg-sub" text-anchor="middle">50% cells update</text>
-        <text x="65" y="80" font-size="9.5" class="dg-sub" text-anchor="middle">50% keep state</text>
-        <text x="65" y="95" font-size="9" class="dg-sub" text-anchor="middle">(breaks lockstep)</text>
-      </g>
-      <!-- Arrow 4 -> 5 -->
-      <path d="M 724 65 H 756" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr1)"></path>
-      <!-- Block 5: Residual & Life -->
-      <g transform="translate(762, 14)">
-        <rect x="0" y="0" width="104" height="102" rx="8" class="dg-box" style="stroke:#2e7d4f; stroke-width:1.5px;"></rect>
-        <text x="52" y="26" font-size="12" font-weight="700" text-anchor="middle" fill="#2e7d4f">Residual &amp; Life</text>
-        <text x="52" y="48" font-size="10.5" class="dg-sub" text-anchor="middle">x &larr; x + &Delta;x</text>
-        <text x="52" y="68" font-size="9.5" class="dg-sub" text-anchor="middle">Viability rule:</text>
-        <text x="52" y="82" font-size="9" class="dg-sub" text-anchor="middle">if max(alpha) &le; 0.1</text>
-        <text x="52" y="95" font-size="9" class="dg-sub" text-anchor="middle">&rarr; apoptosis (0)</text>
-      </g>
-      <g transform="translate(16, 134)">
-        <rect x="0" y="0" width="850" height="44" rx="6" style="fill:var(--bg-figure); stroke:var(--cell-border); stroke-width:1px;"></rect>
-        <text x="20" y="18" font-size="11" font-weight="600" fill="var(--link)">Uniform Cellular Law:</text>
-        <text x="20" y="32" font-size="10" class="dg-sub">The network has ~8,000 total parameters. Every pixel runs this exact same forward pass in parallel with zero global position coordinates.</text>
-      </g>
-    </svg>
-  </div>
 
-  <p>
-    The three core operations:
-  </p>
-  <ul>
-    <li>
-      <strong>Perception ($p \in \mathbb{R}^{48}$)</strong>: Stacks the cell&rsquo;s current state (16) with two spatial neighborhood convolutions
-      $K_0 \ast x$ (16) and $K_1 \ast x$ (16).
-    </li>
-    <li>
-      <strong>Pointwise MLP ($48 \to 128 \to 16$)</strong>: Two dense layers with $\text{ReLU}$ non-linearity propose a velocity
-      vector $\Delta x$. Layer 2 is zero-initialized so untrained models begin by doing nothing.
-    </li>
-    <li>
-      <strong>Stochastic Residual Step</strong>: Each cell flips a coin ($p=0.5$). If heads, it updates: $x \leftarrow x + \Delta x$;
-      if tails, it preserves its state. This async update prevents artificial global clock synchronization.
-    </li>
-  </ul>
+        <!-- Connector down to row 2 -->
+        <path d="M 668 90 V 122 H 236 V 150" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+        <text x="452" y="115" font-size="11" class="dg-sub" text-anchor="middle">&#916;state (16)</text>
 
-  <!-- DIAGRAM 2: Dynamic Perception Kernel Synthesis -->
-  <h3>2. Fixed vs. Dynamic Perception Kernels</h3>
-  <p>
-    Classic NCAs hardcode fixed $3\times3$ Sobel filters. This forces every cell &mdash; whether on the outer boundary,
-    deep in the core, or in empty space &mdash; to see through the exact same spatial lens.
-  </p>
-  <p>
-    Our <strong>Dynamic Kernel NCA</strong> eliminates this bottleneck: each cell inspects its local $3\times3$ surrounding patch
-    to dynamically synthesize a tailored $5\times5$ perception filter from four fundamental basis operators.
-  </p>
+        <!-- Row 2: Stochastic gate -> Residual add -> Alpha viability -->
+        <g>
+          <!-- Stochastic gate -->
+          <rect x="148" y="154" width="176" height="72" rx="8" class="dg-box"></rect>
+          <text x="236" y="182" font-size="13" font-weight="600" text-anchor="middle">Stochastic gate</text>
+          <text x="236" y="200" font-size="10.5" class="dg-sub" text-anchor="middle">fires with p = 0.5,</text>
+          <text x="236" y="215" font-size="10.5" class="dg-sub" text-anchor="middle">otherwise &#916; is dropped</text>
 
-  <div class="diagram-wrap" style="margin: 1.4rem 0;">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 210" role="img" aria-label="Dynamic kernel synthesis pipeline">
-      <defs>
-        <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 1 L 8 5 L 0 9 z" fill="#8a8f98"></path>
-        </marker>
-      </defs>
-      <!-- 1. Local Patch -->
-      <g transform="translate(20, 18)">
-        <rect x="0" y="0" width="130" height="124" rx="8" class="dg-box"></rect>
-        <text x="65" y="24" font-size="12" font-weight="700" text-anchor="middle">Local Patch</text>
-        <g transform="translate(44, 34)">
-          <rect x="0" y="0" width="12" height="12" class="dg-box"></rect>
-          <rect x="15" y="0" width="12" height="12" class="dg-box"></rect>
-          <rect x="30" y="0" width="12" height="12" class="dg-box"></rect>
-          <rect x="0" y="15" width="12" height="12" class="dg-box"></rect>
-          <rect x="15" y="15" width="12" height="12" style="fill:#1a8cff;"></rect>
-          <rect x="30" y="15" width="12" height="12" class="dg-box"></rect>
-          <rect x="0" y="30" width="12" height="12" class="dg-box"></rect>
-          <rect x="15" y="30" width="12" height="12" class="dg-box"></rect>
-          <rect x="30" y="30" width="12" height="12" class="dg-box"></rect>
+          <path d="M 324 190 H 378" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <!-- Residual add -->
+          <rect x="382" y="154" width="152" height="72" rx="8" class="dg-box"></rect>
+          <text x="458" y="186" font-size="13" font-weight="600" text-anchor="middle">Residual add</text>
+          <text x="458" y="206" font-size="11" class="dg-sub" text-anchor="middle">state &#8592; state + &#916;</text>
+
+          <path d="M 534 190 H 588" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+
+          <!-- Alpha viability -->
+          <rect x="592" y="154" width="176" height="72" rx="8" class="dg-box dg-accent" stroke-width="1.5"></rect>
+          <text x="680" y="182" font-size="13" font-weight="600" text-anchor="middle">Alpha viability</text>
+          <text x="680" y="200" font-size="10.5" class="dg-sub" text-anchor="middle">apoptosis if no neighbor</text>
+          <text x="680" y="215" font-size="10.5" class="dg-sub" text-anchor="middle">above &#945; &gt; 0.1 (toggleable)</text>
+
+          <path d="M 680 226 V 250" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr)"></path>
+          <text x="680" y="264" font-size="11" font-weight="600" text-anchor="middle">new state</text>
         </g>
-        <text x="65" y="94" font-size="10" class="dg-sub" text-anchor="middle">3&#215;3 neighborhood</text>
-        <text x="65" y="108" font-size="9" class="dg-sub" text-anchor="middle">16 channels</text>
-      </g>
-      <!-- Arrow 1 -> 2 -->
-      <path d="M 156 80 H 194" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
-      <!-- 2. Gating Softmax -->
-      <g transform="translate(200, 18)">
-        <rect x="0" y="0" width="160" height="124" rx="8" class="dg-box" style="stroke:#1a8cff; stroke-width:1.5px;"></rect>
-        <text x="80" y="24" font-size="12" font-weight="700" text-anchor="middle" fill="#1a8cff">Basis Gating</text>
-        <text x="80" y="44" font-size="10" class="dg-sub" text-anchor="middle">W_surround &ast; patch</text>
-        <text x="80" y="60" font-size="10" class="dg-sub" text-anchor="middle">+ global pooled x̄, h̄</text>
-        <text x="80" y="78" font-size="10.5" class="dg-sub" text-anchor="middle">&darr;</text>
-        <text x="80" y="96" font-size="11" font-weight="600" text-anchor="middle">Softmax(L / T)</text>
-        <text x="80" y="112" font-size="9.5" class="dg-sub" text-anchor="middle">4 weights (&alpha;<sub>0</sub>..&alpha;<sub>3</sub>)</text>
-      </g>
-      <!-- Arrow 2 -> 3 -->
-      <path d="M 366 80 H 406" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
-      <text x="386" y="72" font-size="10" class="dg-sub" text-anchor="middle">&alpha;<sub>m</sub></text>
-      <!-- 3. Four Basis Primitives -->
-      <g transform="translate(412, 10)">
-        <rect x="0" y="0" width="240" height="140" rx="8" class="dg-box"></rect>
-        <text x="120" y="20" font-size="11.5" font-weight="700" text-anchor="middle">4 Fixed Basis Primitives (B<sub>m</sub>)</text>
-        <g transform="translate(14, 28)">
-          <rect x="0" y="0" width="98" height="44" rx="4" class="dg-box" style="stroke:#4db8ff;"></rect>
-          <text x="49" y="16" font-size="9.5" font-weight="600" fill="#4db8ff" text-anchor="middle">&alpha;<sub>0</sub> &middot; Edge (Sobel)</text>
-          <text x="49" y="32" font-size="8.5" class="dg-sub" text-anchor="middle">directional flow</text>
-        </g>
-        <g transform="translate(126, 28)">
-          <rect x="0" y="0" width="98" height="44" rx="4" class="dg-box" style="stroke:#66dd66;"></rect>
-          <text x="49" y="16" font-size="9.5" font-weight="600" fill="#66dd66" text-anchor="middle">&alpha;<sub>1</sub> &middot; Laplacian (&nabla;<sup>2</sup>)</text>
-          <text x="49" y="32" font-size="8.5" class="dg-sub" text-anchor="middle">border curvature</text>
-        </g>
-        <g transform="translate(14, 82)">
-          <rect x="0" y="0" width="98" height="44" rx="4" class="dg-box" style="stroke:#ffaa00;"></rect>
-          <text x="49" y="16" font-size="9.5" font-weight="600" fill="#ffaa00" text-anchor="middle">&alpha;<sub>2</sub> &middot; Gaussian Ring</text>
-          <text x="49" y="32" font-size="8.5" class="dg-sub" text-anchor="middle">spatial frequency</text>
-        </g>
-        <g transform="translate(126, 82)">
-          <rect x="0" y="0" width="98" height="44" rx="4" class="dg-box" style="stroke:#ff5555;"></rect>
-          <text x="49" y="16" font-size="9.5" font-weight="600" fill="#ff5555" text-anchor="middle">&alpha;<sub>3</sub> &middot; Center-Surround</text>
-          <text x="49" y="32" font-size="8.5" class="dg-sub" text-anchor="middle">bulk homeostasis</text>
-        </g>
-      </g>
-      <!-- Arrow 3 -> 4 -->
-      <path d="M 658 80 H 696" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
-      <text x="677" y="72" font-size="12" class="dg-sub" text-anchor="middle">&Sigma;</text>
-      <!-- 4. Effective Kernel K_eff -->
-      <g transform="translate(702, 18)">
-        <rect x="0" y="0" width="160" height="124" rx="8" class="dg-box" style="stroke:#9a3e2e; stroke-width:1.5px;"></rect>
-        <text x="80" y="24" font-size="12" font-weight="700" text-anchor="middle" fill="#9a3e2e">Synthesized K<sub>eff</sub></text>
-        <text x="80" y="46" font-size="11" font-weight="600" text-anchor="middle">5&#215;5 Dynamic Filter</text>
-        <text x="80" y="68" font-size="10.5" class="dg-sub" text-anchor="middle">K = &sum; &alpha;<sub>m</sub> B<sub>m</sub></text>
-        <text x="80" y="92" font-size="9.5" class="dg-sub" text-anchor="middle">Tailored uniquely</text>
-        <text x="80" y="106" font-size="9.5" class="dg-sub" text-anchor="middle">per cell, per step</text>
-      </g>
-      <g transform="translate(20, 160)">
-        <rect x="0" y="0" width="842" height="40" rx="6" style="fill:var(--bg-figure); stroke:var(--cell-border); stroke-width:1px;"></rect>
-        <text x="16" y="16" font-size="10.5" font-weight="600" fill="var(--link)">Why dynamic kernels outperform fixed filters:</text>
-        <text x="16" y="30" font-size="10" class="dg-sub">Edge cells activate &alpha;<sub>1</sub> (Laplacian) to shape sharp boundaries; interior cells activate &alpha;<sub>2</sub> or &alpha;<sub>3</sub> to stabilize bulk tissue mass.</text>
-      </g>
-    </svg>
-  </div>
-
-  <p>
-    When hovering over the live inspector HUD above, you can see these four mixture weights ($\alpha_0..\alpha_3$) update live.
-    Notice how crossing an organism boundary instantly spikes the green Laplacian weight $\alpha_1$!
-  </p>
-
-  <!-- SECTION 3: The Spatial Interpolation Trick -->
-  <h3>3. The Spatial Interpolation Trick</h3>
-  <p>
-    Because all 16-channel models share the same state space, their velocity proposals $\Delta x_A$ and $\Delta x_B$ exist in the same tangent space.
-    Interpolating model weights ($W_{\text{blend}} = (1-\alpha) W_A + \alpha W_B$) destroys the nonlinear attractor dynamics and kills the organism.
-  </p>
-  <p>
-    Instead, the <strong>spatial interpolation trick</strong> evaluates both models independently and blends their infinitesimal velocity updates locally:
-  </p>
-  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.8rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
-&Delta;x(y, x) = (1 - B(y, x)) &middot; &Delta;x<sub>A</sub>(y, x) + B(y, x) &middot; &Delta;x<sub>B</sub>(y, x)
-x(y, x) &larr; x(y, x) + fire &middot; &Delta;x(y, x)</pre>
-  <p>
-    This produces smooth physical chimeras across the boundary without parameter collapse.
-  </p>
-
-  <!-- SECTION 4: Is It a Mask? The Alpha Rule -->
-  <h3>4. Is It a &ldquo;Mask&rdquo;? The Alpha Viability Rule</h3>
-  <p>
-    In software code, this operation is commonly implemented as <code>alive_mask = (max_pool2d(alpha, 3) &gt; 0.1)</code>,
-    which often creates the impression that an external stencil is being overlaid onto the grid.
-  </p>
-  <p>
-    It is <strong>not</strong> an external mask. It is an <strong>intrinsic cellular viability rule (apoptosis)</strong>
-    operating directly on the cell&rsquo;s own state vector ($x_3 = \alpha$):
-  </p>
-  <ul>
-    <li>
-      <strong>The Biological Intuition</strong>: In the original Distill 2020 paper by Mordvintsev et al., $\alpha$ represents
-      cell membrane integrity. In multicellular biology, cells that lose adhesion or contact with living tissue undergo
-      programmed cell death (apoptosis) and dissolve into the void ($x \to \vec{0}$).
-    </li>
-    <li>
-      <strong>Why the Original Rule is Sound</strong>: For embryonic morphogenesis (growing an organism outward from a single fertilized seed),
-      requiring tissue contact ($\max_{3\times3} \alpha > 0.1$) is a natural local rule that prevents dead space from drifting.
-    </li>
-    <li>
-      <strong>Why We Added the Toggle in This Demo</strong>: While the alpha rule is fine for seed growth, it limits
-      <em>abiogenesis</em> &mdash; spontaneous self-organization out of pure noise soup. Unchecking the <em>Alive Mask</em> toggle
-      lets you verify that our noise-trained Dynamic Kernel models maintain quiet backgrounds and sharp borders purely through their
-      learned internal weights, without needing an apoptosis rule!
-    </li>
-  </ul>
+      </svg>
+    </div>
+    <figcaption>
+      <b>The per-cell update engine.</b> Every cell applies this identical
+      network at each step. Perception stacks the cell's current 16 channels with
+      two dynamic spatial convolutions (48 channels total). A two-layer 1&#215;1
+      MLP computes the residual delta &#916;x. Cells update with probability 0.5,
+      and cells without living neighbors undergo apoptosis.
+    </figcaption>
+  </figure>
 </div>
+
+<section class="article-column">
+  <h2>Dynamic perception: learning the lens</h2>
+  <p>
+    Classic NCAs use fixed Sobel filters for perception. That forces every
+    cell &mdash; whether on the outer membrane, deep in the interior, or in
+    empty vacuum &mdash; to inspect its neighborhood through the exact same
+    spatial lens.
+  </p>
+  <p>
+    Here, perception is dynamic. Each cell looks at its immediate 3&times;3
+    neighborhood to synthesize its own 5&times;5 filter. A tiny gating
+    calculation produces four mixture weights that blend four fixed basis
+    primitives: an edge filter, a Laplacian curvature filter, a Gaussian ring,
+    and a center-surround operator.
+  </p>
+  <p>
+    Cells along organism borders dial up the Laplacian to sharpen boundaries;
+    cells deep inside dial up rings and center-surround filters to stabilize
+    bulk mass. You can see this live by hovering over the canvas above:
+    crossing a boundary immediately shifts the mixture meters.
+  </p>
+</section>
+
+<div class="figure-column diagram-column">
+  <figure id="fig-dynkernel">
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 880 170" role="img" xmlns="http://www.w3.org/2000/svg"
+           aria-label="Dynamic kernel perception synthesis: surround context to gating softmax, four basis primitives, and effective 5x5 kernel.">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5"
+                  markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" class="dg-arrowhead"></path>
+          </marker>
+        </defs>
+
+        <g>
+          <!-- 3x3 surround icon -->
+          <g transform="translate(24, 22)">
+            <rect x="0"  y="0"  width="18" height="18" class="dg-box"></rect>
+            <rect x="20" y="0"  width="18" height="18" class="dg-box"></rect>
+            <rect x="40" y="0"  width="18" height="18" class="dg-box"></rect>
+            <rect x="0"  y="20" width="18" height="18" class="dg-box"></rect>
+            <rect x="20" y="20" width="18" height="18" class="dg-box dg-accent" stroke-width="2"></rect>
+            <rect x="40" y="20" width="18" height="18" class="dg-box"></rect>
+            <rect x="0"  y="40" width="18" height="18" class="dg-box"></rect>
+            <rect x="20" y="40" width="18" height="18" class="dg-box"></rect>
+            <rect x="40" y="40" width="18" height="18" class="dg-box"></rect>
+          </g>
+          <text x="53" y="96" font-size="12" font-weight="600" text-anchor="middle">3&#215;3 patch</text>
+          <text x="53" y="112" font-size="10.5" class="dg-sub" text-anchor="middle">local surround</text>
+
+          <path d="M 94 51 H 146" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
+
+          <!-- Surround Gate -->
+          <rect x="150" y="15" width="170" height="72" rx="8" class="dg-box"></rect>
+          <text x="235" y="39" font-size="13" font-weight="600" text-anchor="middle">Surround Gate</text>
+          <text x="235" y="58" font-size="10.5" class="dg-sub" text-anchor="middle">3&#215;3 conv + softmax</text>
+          <text x="235" y="73" font-size="10.5" class="dg-sub" text-anchor="middle">&#8594; weights [&#945;&#8320;..&#945;&#8323;]</text>
+
+          <path d="M 320 51 H 372" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
+          <text x="346" y="42" font-size="11" class="dg-sub" text-anchor="middle">&#945;&#7522;</text>
+
+          <!-- 4 Basis Filters -->
+          <rect x="376" y="12" width="276" height="88" rx="8" class="dg-box"></rect>
+          <text x="514" y="30" font-size="11.5" font-weight="600" text-anchor="middle">4 Fixed Basis Filters (5&#215;5)</text>
+
+          <rect x="388" y="38" width="120" height="24" rx="4" class="dg-box"></rect>
+          <text x="448" y="54" font-size="10" text-anchor="middle">&#945;&#8320; &#183; Edge (Sobel)</text>
+
+          <rect x="520" y="38" width="120" height="24" rx="4" class="dg-box"></rect>
+          <text x="580" y="54" font-size="10" text-anchor="middle">&#945;&#8321; &#183; Laplacian (&#8711;&#178;)</text>
+
+          <rect x="388" y="68" width="120" height="24" rx="4" class="dg-box"></rect>
+          <text x="448" y="84" font-size="10" text-anchor="middle">&#945;&#8322; &#183; Gaussian Ring</text>
+
+          <rect x="520" y="68" width="120" height="24" rx="4" class="dg-box"></rect>
+          <text x="580" y="84" font-size="10" text-anchor="middle">&#945;&#8323; &#183; Center-Surround</text>
+
+          <path d="M 652 51 H 704" class="dg-arrow" stroke-width="1.5" marker-end="url(#arr2)"></path>
+          <text x="678" y="42" font-size="11" class="dg-sub" text-anchor="middle">&#8721; &#945;&#7522; B&#7522;</text>
+
+          <!-- Dynamic Kernel K -->
+          <rect x="708" y="15" width="154" height="72" rx="8" class="dg-box dg-accent" stroke-width="1.5"></rect>
+          <text x="785" y="39" font-size="13" font-weight="600" text-anchor="middle">Dynamic Kernel K</text>
+          <text x="785" y="58" font-size="10.5" class="dg-sub" text-anchor="middle">5&#215;5 synthesized filter</text>
+          <text x="785" y="73" font-size="10.5" class="dg-sub" text-anchor="middle">convolves with state x</text>
+        </g>
+
+        <!-- Summary text below -->
+        <text x="440" y="134" font-size="11" class="dg-sub" text-anchor="middle">Edge cells dial up &#945;&#8321; (Laplacian) for boundaries; interior cells blend &#945;&#8322; and &#945;&#8323; for bulk mass.</text>
+        <text x="440" y="152" font-size="11" class="dg-sub" text-anchor="middle">Hover over the simulation grid above to inspect the live kernel and mixture weights at any cell.</text>
+      </svg>
+    </div>
+    <figcaption>
+      <b>Dynamic perception filter synthesis.</b> Instead of rigid Sobel
+      filters, each cell examines its local surroundings to compute four mixture
+      weights. These linearly combine four fixed spatial primitives into a custom
+      5&#215;5 kernel tailored per cell, per step.
+    </figcaption>
+  </figure>
+</div>
+
+<section class="article-column">
+  <h2>Blending two creatures: the interpolation trick</h2>
+  <p>
+    A neural network&rsquo;s weights are non-linear: averaging the weights of two
+    trained models destroys their attractors and kills both organisms. But
+    because both models operate on the same 16-channel physics, their update
+    deltas live in the same coordinate space.
+  </p>
+  <p>
+    At each step, we query Model A for &#916;x<sub>A</sub> and Model B for
+    &#916;x<sub>B</sub>, then apply a local linear blend weighted by the
+    painted control field:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.75rem 1.1rem; overflow-x:auto; font-size:0.86rem; font-family:ui-monospace,SF Mono,Menlo,monospace;">&#916;x = (1 &#8722; B) &#183; &#916;x<sub>A</sub> + B &#183; &#916;x<sub>B</sub>
+x &#8592; x + fire &#183; &#916;x</pre>
+  <p>
+    Where B = 0, Model A rules. Where B = 1, Model B rules. Along the seam,
+    the two physics rules negotiate a stable interface without parameter
+    collapse.
+  </p>
+</section>
+
+<section class="article-column">
+  <h2>Is it a mask? The alpha viability rule</h2>
+  <p>
+    In code, the original Mordvintsev et al. rule is often written as
+    <code>alive_mask = (max_pool(alpha, 3) &gt; 0.1)</code>. Calling it a
+    &ldquo;mask&rdquo; makes it sound like an external stencil stamped onto
+    the simulation from above.
+  </p>
+  <p>
+    It is not an external mask. It is an intrinsic cellular viability threshold
+    operating directly on the cell&rsquo;s own state. Channel 3 (&alpha;)
+    represents cell membrane density. If a cell and all eight of its immediate
+    neighbors have &alpha; &le; 0.1, the cell has lost contact with living tissue
+    and undergoes apoptosis &mdash; its state resets to zero. For morphogenesis
+    from a single seed, this rule is biologically natural: it prevents drifting
+    debris in empty space.
+  </p>
+  <p>
+    The toggle in the toolbar lets you turn this apoptosis rule off. When
+    disabled, you can test whether noise-trained models can hold their own
+    boundaries and keep the vacuum silent purely through their learned internal
+    weights.
+  </p>
+</section>
 
 <footer>
   <div class="article-column">
