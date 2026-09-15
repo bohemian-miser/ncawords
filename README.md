@@ -4,6 +4,12 @@ Train **neural cellular automata** — tiny models where every pixel runs the sa
 little rule, and structure grows from a single seed — then watch them in a
 browser gallery. Words, emoji, textures, Game-of-Life physics, Lenia kernels.
 
+### 🌐 Live Interactive Demos (GitHub Pages)
+
+- **[Live Runs Gallery](https://bohemian-miser.github.io/ncawords/lenia.html)** — Unified gallery listing all runs with training snapshots, loss curves, and live in-browser simulations.
+- **[Dynamic Kernel Interpolation Demo](https://bohemian-miser.github.io/ncawords/demo_dynkernel.html)** — Compare and interpolate between dynamic-kernel & fixed-kernel models (Fire, Rocket, Heart, Gecko, Alien, Butterfly, Hex, Dots) with real-time kernel inspector HUD and pure noise nucleation.
+- **[Interactive Article & Research Demos](https://bohemian-miser.github.io/ncawords/)** — Interactive writeup on text NCAs, feature modulation, multi-species coexistence, and gradient steering.
+
 You say what you want in chat; a coding agent writes and launches the
 experiments; results stream to your bucket and appear in the gallery, live.
 
@@ -75,13 +81,12 @@ mytext-r0__tough  nca.train_noisefester --source=mytext-r0 --mix
 The `<base>__<tag>` name keeps the lineage obvious, and the gallery links the
 child back to its parent.
 
-## The gallery
+## The gallery & demos
 
-`./serve.sh` → **Runs** lists every run with snapshots, loss curves, learned
-kernels, and a live in-browser simulation you can seed, damage, and play with.
-**Playground** and **Demos** are hand-built interactive pages: paint which rules
-apply where, steer an organism with a gradient field, watch two species share a
-grid.
+Visit the **[Live Web App](https://bohemian-miser.github.io/ncawords/lenia.html)** or run `./serve.sh`:
+- **Runs (`lenia.html`)**: The unified gallery listing every run with snapshots, loss curves, learned kernels, and live in-browser simulations you can seed, damage, and interact with (supersedes the legacy Playground).
+- **Dynamic Kernel Interpolation (`demo_dynkernel.html`)**: Real-time spatial interpolation, continuous morphing, and pure noise nucleation across dynamic-kernel and fixed-kernel models with live basis HUD.
+- **Interactive Demos**: Multi-species coexistence (`demo_coexist.html`), target steering (`demo_steer.html`), and feature modulation (`demo_modulation.html`).
 
 ## Layout
 
