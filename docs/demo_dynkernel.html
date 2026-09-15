@@ -8,6 +8,9 @@
 <link rel="stylesheet" href="style.css">
 <style>
   /* demo-dynkernel-specific styling */
+  .figure-column {
+    max-width: min(1520px, 98vw);
+  }
   .demo-canvas-wrap {
     display: flex;
     justify-content: center;
@@ -15,8 +18,8 @@
     overflow-x: auto;
   }
   #demo-canvas {
-    width: 480px;
-    height: 480px;
+    width: 1440px;
+    height: 1440px;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     display: block;
@@ -28,6 +31,12 @@
     max-width: 100%;
     height: auto;
     box-shadow: var(--shadow);
+    transition: max-width 0.2s ease;
+  }
+  #demo-canvas.fit-mode {
+    max-width: 880px;
+    width: 100%;
+    height: auto;
   }
 
   .demo-legend {
@@ -279,12 +288,15 @@
         </div>
         <div class="ctl-group">
           <label for="brush-radius">Radius:</label>
-          <input type="range" id="brush-radius" min="2" max="25" step="1" value="8">
-          <span id="brush-radius-val" style="min-width:30px; font-family:monospace;">8px</span>
+          <input type="range" id="brush-radius" min="4" max="50" step="1" value="16">
+          <span id="brush-radius-val" style="min-width:30px; font-family:monospace;">16px</span>
         </div>
         <div class="ctl-group">
           <label><input type="checkbox" id="overlay-toggle" checked> Show Field Overlay</label>
           <input type="range" id="overlay-opacity" min="0.05" max="0.6" step="0.05" value="0.25" style="width:70px;" title="Overlay opacity">
+        </div>
+        <div class="btn-group" style="margin-left:auto;">
+          <button id="btn-toggle-view" title="Toggle between Native 1:1 (5px/cell · 1440px) and Fit to Screen">🔍 View: 100% (5px/cell)</button>
         </div>
       </div>
 
@@ -299,17 +311,18 @@
         </div>
         <div class="ctl-group" style="margin-left:auto;">
           <label for="speed-slider">Speed:</label>
-          <input type="range" id="speed-slider" min="1" max="8" step="1" value="2" style="width:75px;">
-          <span id="speed-val" style="min-width:18px; font-family:monospace;">2</span>
-          <label style="margin-left:8px;"><input type="checkbox" id="alive-mask-toggle" checked> Alive Mask</label>
+          <input type="range" id="speed-slider" min="1" max="5" step="1" value="1" style="width:75px;">
+          <span id="speed-val" style="min-width:18px; font-family:monospace;">1</span>
+          <label style="margin-left:8px;" title="Mordvintsev et al. threshold clamp. Uncheck to test pure continuous dynamics without mask."><input type="checkbox" id="alive-mask-toggle" checked> Alive Mask</label>
         </div>
       </div>
     </div>
 
     <!-- Main Interactive Simulation Canvas -->
     <div class="demo-canvas-wrap">
-      <canvas id="demo-canvas" width="96" height="96"></canvas>
+      <canvas id="demo-canvas" width="288" height="288"></canvas>
     </div>
+    <div class="demo-legend">288 &times; 288 Arena (82,944 cells &mdash; 9&times; total area, rendered at native 5px/cell scale)</div>
 
     <div id="demo-status">Loading model weights…</div>
 
@@ -612,6 +625,55 @@ x(x, y) &larr; x(x, y) + fire &middot; dx(x, y)</pre>
   <p>
     Watch the system: within 40&ndash;80 steps, cells self-coordinate, extinguish high-entropy background noise, and nucleate into
     stable living forms matching the spatial rule boundaries painted in $B(x, y)$.
+  </p>
+
+  <h3>8. What is the Alive Mask, and Why is it an Architectural Smell?</h3>
+  <p>
+    In the simulation controls above, you will find an <strong>Alive Mask</strong> checkbox.
+    In the seminal Distill 2020 paper (<em>Growing Neural Cellular Automata</em> by Mordvintsev et al.), the authors introduced
+    a hardcoded, non-differentiable rule into the simulation loop:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.84rem;">
+alive(y, x) = max<sub>&Delta;y, &Delta;x &isin; {-1, 0, 1}</sub> &alpha;(y + &Delta;y, x + &Delta;x) &gt; 0.1
+x(y, x) &larr; x(y, x) &middot; [ alive<sub>pre</sub>(y, x) &and; alive<sub>post</sub>(y, x) ]</pre>
+  <p>
+    Any cell whose Moore $3\times3$ neighborhood has no alpha exceeding 0.1 is categorized as &ldquo;dead&rdquo; &mdash; and its entire
+    16-channel state is forcibly set to zero.
+  </p>
+
+  <p><strong>Why was it originally introduced?</strong></p>
+  <ul>
+    <li>
+      <strong>Empty-Space Drift</strong>: Unconstrained neural networks easily produce minute non-zero output biases ($\Delta x \approx 10^{-3}$).
+      Over hundreds of unrolled recurrent steps in empty space ($x = \vec{0}$), these biases compound into &ldquo;ghost noise&rdquo; or spontaneous runaway static.
+    </li>
+    <li>
+      <strong>Embryonic Morphogenesis Constraint</strong>: Mordvintsev et al. wanted to simulate biological development, where growth proceeds
+      strictly via cell division outward from an initial single-cell zygote. The alive mask guarantees that cells can only activate adjacent to already-living cells.
+    </li>
+  </ul>
+
+  <p><strong>Why is it an architectural &ldquo;smell&rdquo;?</strong></p>
+  <ul>
+    <li>
+      <strong>Breaks Cellular Automata Purity</strong>: In true cellular automata (Conway&rsquo;s Game of Life, continuous Lenia, reaction-diffusion PDEs),
+      the defining axiom is <em>spatial uniformity</em>: every cell in the universe obeys the exact same physical law. An external, hand-crafted referee
+      clamping channels to zero from outside the neural net violates this foundational axiom.
+    </li>
+    <li>
+      <strong>Forbids Abiogenesis / Spontaneous Nucleation</strong>: If cells can only be born adjacent to existing live cells, true nucleation out of
+      a primordial soup or random noise is mathematically forbidden. In Conway's Game of Life, three dead cells birth a live cell ($0 \to 1$); an alive mask
+      would kill that newborn cell before it could ever take its first step.
+    </li>
+    <li>
+      <strong>An Inductive Crutch</strong>: A properly regularized dynamical system should learn in its own weights ($fc_0$ and $fc_1$) that
+      $x = \vec{0}$ is a stable attractor fixed-point ($\Delta x(\vec{0}) = \vec{0}$). Relying on an external mask allows the network to remain sloppy about empty-space dynamics.
+    </li>
+  </ul>
+  <p>
+    <strong>Live Verification:</strong> Uncheck <em>Alive Mask</em> in the controls. Notice how our noise-trained Dynamic Kernel models
+    (🔥 Fire, 🚀 Rocket, 🦎 Gecko) maintain pristine, quiet backgrounds and sharp borders purely through their learned internal dynamics,
+    proving they no longer rely on the alive mask crutch!
   </p>
 </div>
 

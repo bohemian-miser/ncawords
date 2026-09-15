@@ -13,7 +13,7 @@
 // Supports spontaneous self-organization from pure noise, seed planting, damage repair,
 // and real-time inspector of effective 5x5 dynamic kernels and basis activations.
 
-const SIM_SIZE = 96;
+const SIM_SIZE = 288;
 const SIM_PLANE = SIM_SIZE * SIM_SIZE;
 const C = 16;
 const HN = 128;
@@ -82,14 +82,40 @@ function parseWeights(raw) {
     parsed.b_x_to_k = raw.b_x_to_k ? Float32Array.from(raw.b_x_to_k) : null;
     parsed.w_h_to_k = raw.w_h_to_k || null;
     parsed.b_h_to_k = raw.b_h_to_k ? Float32Array.from(raw.b_h_to_k) : null;
-  } else if (raw.kernels && raw.kernels.length >= 2) {
-    parsed.kernels = raw.kernels; // [Nk, ks, ks]
+
+    // Pre-flatten basis kernels [Nk][M] into 1D Float32Arrays for zero-allocation synthesis
+    parsed.flatBasis = [];
+    for (let k = 0; k < Nk; k++) {
+      const basisList = [];
+      for (let m = 0; m < parsed.num_basis; m++) {
+        const flat = new Float32Array(ks * ks);
+        const bkm = raw.basis_kernels[k][m];
+        for (let r = 0; r < ks; r++) {
+          for (let c = 0; c < ks; c++) {
+            flat[r * ks + c] = bkm[r][c];
+          }
+        }
+        basisList.push(flat);
+      }
+      parsed.flatBasis.push(basisList);
+    }
   } else {
-    // Sobel fallback
-    parsed.kernels = [
+    parsed.flatKernels = [];
+    const srcK = (raw.kernels && raw.kernels.length >= 2) ? raw.kernels : [
       [[-1/8, 0, 1/8], [-2/8, 0, 2/8], [-1/8, 0, 1/8]],
       [[-1/8, -2/8, -1/8], [0, 0, 0], [1/8, 2/8, 1/8]]
     ];
+    parsed.kernels = srcK;
+    for (let k = 0; k < Nk; k++) {
+      const flat = new Float32Array(ks * ks);
+      const kMat = srcK[k];
+      for (let r = 0; r < ks; r++) {
+        for (let c = 0; c < ks; c++) {
+          flat[r * ks + c] = kMat[r][c];
+        }
+      }
+      parsed.flatKernels.push(flat);
+    }
   }
   return parsed;
 }
@@ -118,6 +144,14 @@ class BlendedDynKernelCA {
     this.hB = new Float32Array(HN);
     this.dxA = new Float32Array(C);
     this.dxB = new Float32Array(C);
+
+    // Scratch buffers for dynamic kernel synthesis (zero allocation in step)
+    this.k0A = new Float32Array(25);
+    this.k1A = new Float32Array(25);
+    this.k0B = new Float32Array(25);
+    this.k1B = new Float32Array(25);
+    this.scratchLogits = new Float32Array(8);
+    this.scratchAlpha = new Float32Array(8);
     
     this.pre = new Uint8Array(this.plane);
     this.post = new Uint8Array(this.plane);
@@ -165,12 +199,12 @@ class BlendedDynKernelCA {
     this.clear();
     const W = this.W, H = this.H;
     // Seed A in left quadrant
-    const ax = Math.floor(W * 0.28), ay = Math.floor(H * 0.5);
+    const ax = Math.floor(W * 0.30), ay = Math.floor(H * 0.5);
     // Seed B in right quadrant
-    const bx = Math.floor(W * 0.72), by = Math.floor(H * 0.5);
+    const bx = Math.floor(W * 0.70), by = Math.floor(H * 0.5);
     
-    this._placeSeedBlob(ax, ay, 4);
-    this._placeSeedBlob(bx, by, 4);
+    this._placeSeedBlob(ax, ay, 6);
+    this._placeSeedBlob(bx, by, 6);
   }
 
   _placeSeedBlob(cx, cy, radius = 3) {
@@ -366,50 +400,149 @@ class BlendedDynKernelCA {
     }
   }
 
-  _computeProposal(model, alphaLayer, hState, hNext, x, y, pOut, hOut, dxOut) {
+  _synthesizeKernelFlat(model, alphaLayer, gx, gy, kOut0, kOut1) {
+    if (!model.isDynamic) {
+      kOut0.set(model.flatKernels[0]);
+      kOut1.set(model.flatKernels[1]);
+      return;
+    }
+    const W = this.W, H = this.H, plane = this.plane;
+    const cur = this.buf;
+    const Nk = model.Nk, M = model.num_basis;
+    const flatBasis = model.flatBasis;
+    const ws = model.w_surround, bs = model.b_surround;
+    const temp = model.temperature;
+    const ks = model.ks;
+    const ks2 = ks * ks;
+
+    for (let k = 0; k < Nk; k++) {
+      let maxL = -Infinity;
+      for (let m = 0; m < M; m++) {
+        const idx = k * M + m;
+        let a = (bs[idx] !== undefined ? bs[idx] : 0.0) + (alphaLayer ? alphaLayer[idx] : 0.0);
+        const w_km = ws[idx];
+        for (let dy = -1; dy <= 1; dy++) {
+          const py = gy + dy;
+          if (py < 0 || py >= H) continue;
+          const rowOff = py * W;
+          const wy = dy + 1;
+          for (let dx = -1; dx <= 1; dx++) {
+            const px = gx + dx;
+            if (px < 0 || px >= W) continue;
+            const pix = rowOff + px;
+            const wx_val = dx + 1;
+            for (let c = 0; c < C; c++) {
+              a += w_km[c][wy][wx_val] * cur[c * plane + pix];
+            }
+          }
+        }
+        this.scratchLogits[m] = a;
+        if (a > maxL) maxL = a;
+      }
+
+      let sumExp = 0;
+      for (let m = 0; m < M; m++) {
+        const ex = Math.exp((this.scratchLogits[m] - maxL) / temp);
+        this.scratchAlpha[m] = ex;
+        sumExp += ex;
+      }
+      const invSum = 1.0 / (sumExp > 1e-8 ? sumExp : 1e-8);
+      for (let m = 0; m < M; m++) {
+        this.scratchAlpha[m] *= invSum;
+      }
+
+      const kTarget = (k === 0) ? kOut0 : kOut1;
+      kTarget.fill(0);
+      const basisK = flatBasis[k];
+      for (let m = 0; m < M; m++) {
+        const weight = this.scratchAlpha[m];
+        const bMat = basisK[m];
+        for (let j = 0; j < ks2; j++) {
+          kTarget[j] += weight * bMat[j];
+        }
+      }
+    }
+  }
+
+  _computeProposal(model, k0, k1, hState, hNext, x, y, pOut, hOut, dxOut) {
     const W = this.W, H = this.H, plane = this.plane;
     const cur = this.buf;
     const i = y * W + x;
-    const { kernels } = this.getEffectiveKernel(model, alphaLayer, x, y);
     const ks = model.ks, pad = model.pad;
     const inC = model.inC;
     const fc0_w = model.fc0_w, fc0_b = model.fc0_b, fc1_w = model.fc1_w;
 
-    // 1. Fill perception buffer: [identity (16) | kernel0 (16) | kernel1 (16)]
-    for (let c = 0; c < C; c++) {
-      pOut[c] = cur[c * plane + i];
-      
-      // Kernel 0
-      let k0Sum = 0;
-      const K0 = kernels[0];
-      for (let dy = -pad; dy <= pad; dy++) {
-        const py = y + dy;
-        if (py < 0 || py >= H) continue;
-        const rowOff = py * W;
-        const rowK = K0[dy + pad];
-        for (let dx = -pad; dx <= pad; dx++) {
-          const px = x + dx;
-          if (px < 0 || px >= W) continue;
-          k0Sum += rowK[dx + pad] * cur[c * plane + rowOff + px];
-        }
-      }
-      pOut[16 + c] = k0Sum;
+    // 1. Perception convolution
+    const isInterior = (x >= pad && x < W - pad && y >= pad && y < H - pad);
 
-      // Kernel 1
-      let k1Sum = 0;
-      const K1 = kernels[1];
-      for (let dy = -pad; dy <= pad; dy++) {
-        const py = y + dy;
-        if (py < 0 || py >= H) continue;
-        const rowOff = py * W;
-        const rowK = K1[dy + pad];
-        for (let dx = -pad; dx <= pad; dx++) {
-          const px = x + dx;
-          if (px < 0 || px >= W) continue;
-          k1Sum += rowK[dx + pad] * cur[c * plane + rowOff + px];
+    if (isInterior && ks === 5) {
+      // Branchless unrolled 5x5 convolution for interior cells
+      for (let c = 0; c < C; c++) {
+        const cOff = c * plane;
+        pOut[c] = cur[cOff + i];
+        
+        let sum0 = 0, sum1 = 0;
+        let kidx = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          const rowStart = cOff + (y + dy) * W + (x - 2);
+          for (let dx = 0; dx < 5; dx++) {
+            const v = cur[rowStart + dx];
+            sum0 += k0[kidx] * v;
+            sum1 += k1[kidx] * v;
+            kidx++;
+          }
         }
+        pOut[16 + c] = sum0;
+        pOut[32 + c] = sum1;
       }
-      pOut[32 + c] = k1Sum;
+    } else if (isInterior && ks === 3) {
+      // Branchless unrolled 3x3 convolution
+      for (let c = 0; c < C; c++) {
+        const cOff = c * plane;
+        pOut[c] = cur[cOff + i];
+        
+        let sum0 = 0, sum1 = 0;
+        let kidx = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const rowStart = cOff + (y + dy) * W + (x - 1);
+          for (let dx = 0; dx < 3; dx++) {
+            const v = cur[rowStart + dx];
+            sum0 += k0[kidx] * v;
+            sum1 += k1[kidx] * v;
+            kidx++;
+          }
+        }
+        pOut[16 + c] = sum0;
+        pOut[32 + c] = sum1;
+      }
+    } else {
+      // Safe border convolution with boundary clipping
+      for (let c = 0; c < C; c++) {
+        const cOff = c * plane;
+        pOut[c] = cur[cOff + i];
+
+        let sum0 = 0, sum1 = 0;
+        let kidx = 0;
+        for (let dy = -pad; dy <= pad; dy++) {
+          const py = y + dy;
+          if (py < 0 || py >= H) {
+            kidx += ks;
+            continue;
+          }
+          const rowOff = cOff + py * W;
+          for (let dx = -pad; dx <= pad; dx++) {
+            const px = x + dx;
+            if (px >= 0 && px < W) {
+              const v = cur[rowOff + px];
+              sum0 += k0[kidx] * v;
+              sum1 += k1[kidx] * v;
+            }
+            kidx++;
+          }
+        }
+        pOut[16 + c] = sum0;
+        pOut[32 + c] = sum1;
+      }
     }
 
     // 2. Hidden layer: h = ReLU(fc0_w * p + fc0_b)
@@ -467,21 +600,31 @@ class BlendedDynKernelCA {
     const cur = this.buf, nxt = this.back;
     const Bf = this.B;
     const fireRate = this.fire_rate;
+    const useAlive = this.aliveMaskEnabled;
 
     this._updateAlphaLayer(this.modelA, this.x_barA, this.h_barA, this.alpha_layerA, this.hStateA);
     this._updateAlphaLayer(this.modelB, this.x_barB, this.h_barB, this.alpha_layerB, this.hStateB);
 
-    if (this.aliveMaskEnabled) {
+    if (useAlive) {
       this._aliveMask(cur, this.pre);
     }
 
     const pA = this.pA, pB = this.pB;
     const hA = this.hA, hB = this.hB;
     const dxA = this.dxA, dxB = this.dxB;
+    const k0A = this.k0A, k1A = this.k1A;
+    const k0B = this.k0B, k1B = this.k1B;
 
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         const i = y * W + x;
+
+        // When alive mask is enabled, cells with pre[i] == 0 are strictly dead
+        if (useAlive && !this.pre[i]) {
+          for (let c = 0; c < C; c++) nxt[c * plane + i] = 0;
+          continue;
+        }
+
         const fired = Math.random() <= fireRate;
         if (!fired) {
           for (let c = 0; c < C; c++) nxt[c * plane + i] = cur[c * plane + i];
@@ -491,21 +634,23 @@ class BlendedDynKernelCA {
         const bVal = Bf[i];
         const aVal = 1.0 - bVal;
 
-        // Optimization: only evaluate rules that have non-zero weight
         if (bVal <= 0.001) {
-          this._computeProposal(this.modelA, this.alpha_layerA, this.hStateA, this.hNextA, x, y, pA, hA, dxA);
+          this._synthesizeKernelFlat(this.modelA, this.alpha_layerA, x, y, k0A, k1A);
+          this._computeProposal(this.modelA, k0A, k1A, this.hStateA, this.hNextA, x, y, pA, hA, dxA);
           for (let c = 0; c < C; c++) {
             nxt[c * plane + i] = cur[c * plane + i] + dxA[c];
           }
         } else if (bVal >= 0.999) {
-          this._computeProposal(this.modelB, this.alpha_layerB, this.hStateB, this.hNextB, x, y, pB, hB, dxB);
+          this._synthesizeKernelFlat(this.modelB, this.alpha_layerB, x, y, k0B, k1B);
+          this._computeProposal(this.modelB, k0B, k1B, this.hStateB, this.hNextB, x, y, pB, hB, dxB);
           for (let c = 0; c < C; c++) {
             nxt[c * plane + i] = cur[c * plane + i] + dxB[c];
           }
         } else {
-          // Blended active boundary
-          this._computeProposal(this.modelA, this.alpha_layerA, this.hStateA, this.hNextA, x, y, pA, hA, dxA);
-          this._computeProposal(this.modelB, this.alpha_layerB, this.hStateB, this.hNextB, x, y, pB, hB, dxB);
+          this._synthesizeKernelFlat(this.modelA, this.alpha_layerA, x, y, k0A, k1A);
+          this._computeProposal(this.modelA, k0A, k1A, this.hStateA, this.hNextA, x, y, pA, hA, dxA);
+          this._synthesizeKernelFlat(this.modelB, this.alpha_layerB, x, y, k0B, k1B);
+          this._computeProposal(this.modelB, k0B, k1B, this.hStateB, this.hNextB, x, y, pB, hB, dxB);
           for (let c = 0; c < C; c++) {
             nxt[c * plane + i] = cur[c * plane + i] + (aVal * dxA[c] + bVal * dxB[c]);
           }
@@ -514,7 +659,7 @@ class BlendedDynKernelCA {
     }
 
     // Post alive mask check
-    if (this.aliveMaskEnabled) {
+    if (useAlive) {
       this._aliveMask(nxt, this.post);
       for (let i = 0; i < plane; i++) {
         if (!(this.pre[i] && this.post[i])) {
@@ -582,13 +727,15 @@ class BlendedDynKernelCA {
 let engine = null;
 let animTimer = null;
 let isPaused = false;
-let stepsPerTick = 2;
+let stepsPerTick = 1;
 let brushMode = "modelB"; // "modelA", "modelB", "damage"
-let brushRadius = 8;
+let brushRadius = 16;
 let isMouseDown = false;
-let hoveredX = 48, hoveredY = 48;
+let hoveredX = Math.floor(SIM_SIZE / 2), hoveredY = Math.floor(SIM_SIZE / 2);
 
 const canvas = document.getElementById("demo-canvas");
+canvas.width = SIM_SIZE;
+canvas.height = SIM_SIZE;
 const ctx = canvas.getContext("2d");
 const canvasImgData = ctx.createImageData(SIM_SIZE, SIM_SIZE);
 const rgbaBuffer = new Uint8ClampedArray(SIM_PLANE * 4);
@@ -956,6 +1103,17 @@ if (brushRadiusSlider) {
   brushRadiusSlider.oninput = (e) => {
     brushRadius = parseInt(e.target.value, 10);
     brushRadiusLabel.innerText = `${brushRadius}px`;
+  };
+}
+
+const btnToggleView = document.getElementById("btn-toggle-view");
+let isFitView = false;
+if (btnToggleView) {
+  btnToggleView.onclick = () => {
+    isFitView = !isFitView;
+    canvas.classList.toggle("fit-mode", isFitView);
+    btnToggleView.innerText = isFitView ? "🔍 View: Fit Screen" : "🔍 View: 100% (5px/cell)";
+    updateKernelInspector();
   };
 }
 
