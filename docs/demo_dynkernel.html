@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="An interactive demo comparing Dynamic Layer-Modulated Kernel NCA organisms side-by-side on a shared 16-channel grid using the spatial interpolation trick.">
+<title>Dynamic Kernel NCA &mdash; Physics Interpolation &amp; Organism Comparison</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  /* demo-dynkernel-specific styling */
+  .demo-canvas-wrap {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0;
+    overflow-x: auto;
+  }
+  #demo-canvas {
+    width: 480px;
+    height: 480px;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    background: #fff;
+    border: 1px solid var(--cell-border);
+    border-radius: 6px;
+    cursor: crosshair;
+    touch-action: none;
+    max-width: 100%;
+    height: auto;
+    box-shadow: var(--shadow);
+  }
+
+  .demo-legend {
+    text-align: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+    margin: 0.7rem 0 1.1rem;
+  }
+
+  .demo-controls-card {
+    background: var(--bg-figure);
+    border: 1px solid var(--cell-border);
+    border-radius: 8px;
+    padding: 1.1rem 1.4rem;
+    margin: 1.2rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 0.84rem;
+  }
+
+  .ctl-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.7rem 1.2rem;
+  }
+
+  .ctl-group {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-soft);
+  }
+  .ctl-group label { white-space: nowrap; font-weight: 500; }
+  .ctl-group select {
+    font-family: inherit;
+    font-size: 0.84rem;
+    color: var(--text);
+    background: var(--btn-bg);
+    border: 1px solid var(--btn-border);
+    border-radius: 6px;
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+  }
+  .ctl-group select:hover { background: var(--btn-bg-hover); }
+
+  .ctl-group input[type="range"] {
+    width: 110px;
+    accent-color: var(--link);
+    vertical-align: middle;
+  }
+
+  .btn-group { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .btn-group button {
+    font-family: inherit;
+    font-size: 0.80rem;
+    font-weight: 600;
+    padding: 0.38rem 0.72rem;
+    background: var(--btn-bg);
+    color: var(--text);
+    border: 1px solid var(--btn-border);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn-group button:hover { background: var(--btn-bg-hover); border-color: var(--link); }
+  .btn-group button.active-brush {
+    background: var(--link);
+    color: #fff;
+    border-color: var(--link);
+  }
+
+  .primary-action {
+    background: #2e7d4f !important;
+    color: #fff !important;
+    border-color: #2e7d4f !important;
+  }
+  .primary-action:hover { background: #37835f !important; }
+
+  .noise-action {
+    background: #d97706 !important;
+    color: #fff !important;
+    border-color: #d97706 !important;
+  }
+  .noise-action:hover { background: #b45309 !important; }
+
+  .danger-action {
+    background: #dc2626 !important;
+    color: #fff !important;
+    border-color: #dc2626 !important;
+  }
+  .danger-action:hover { background: #b91c1c !important; }
+
+  #demo-status {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+    text-align: center;
+    min-height: 1.3em;
+  }
+
+  /* Kernel Inspector HUD */
+  .inspector-card {
+    background: #121418;
+    color: #eee;
+    border: 1px solid #333a44;
+    border-radius: 8px;
+    padding: 1.2rem;
+    margin-top: 1.4rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .inspector-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #4db8ff;
+    margin-bottom: 0.4rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .inspector-readout {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.74rem;
+    color: #aaa;
+  }
+  .kernel-strip-row {
+    display: flex;
+    gap: 1.6rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 0.9rem;
+  }
+  .kernel-strip-col {
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .kernel-strip-col canvas {
+    width: 100px;
+    height: 100px;
+    image-rendering: pixelated;
+    background: #000;
+    border: 1px solid #444;
+    border-radius: 4px;
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+  .kernel-col-label {
+    font-size: 0.74rem;
+    color: #ccc;
+    font-weight: 500;
+    margin-bottom: 0.3rem;
+  }
+  .basis-meter-wrap {
+    width: 90px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 0.3rem;
+  }
+  .basis-meter {
+    height: 4px;
+    background: #2a2e36;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .basis-bar {
+    height: 100%;
+    background: #4db8ff;
+    width: 25%;
+  }
+  .basis-meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.64rem;
+    color: #888;
+    font-family: monospace;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sitenav" aria-label="Site">
+  <a href="index.html">Article</a>
+  <a href="lenia.html">Runs</a>
+  <a href="research.html">Research log</a>
+  <a href="demo_dynkernel.html" aria-current="page">Demos</a>
+</nav>
+
+<header class="masthead">
+  <div class="article-column">
+    <p class="kicker">Interactive demo</p>
+    <h1>Dynamic Kernel NCA &mdash; Physics Interpolation &amp; Organism Comparison</h1>
+    <p class="subtitle">
+      In our <strong>Dynamic Layer-Modulated Kernel NCA</strong> architecture, every cell dynamically
+      synthesizes its 5&times;5 spatial perception filters from a basis modulated by its surrounding state.
+      This demo lets you compare these models side-by-side on a shared 16-channel grid using the
+      <strong>interpolation trick</strong>: a painted control field $B(x, y)$ smoothly interpolates between
+      Model A and Model B cell-by-cell ($dx = (1-B) dx_A + B dx_B$).
+    </p>
+  </div>
+</header>
+
+<div class="figure-column">
+  <figure>
+    <!-- Controls Toolbar Card -->
+    <div class="demo-controls-card">
+      <!-- Row 1: Model Pickers -->
+      <div class="ctl-row">
+        <div class="ctl-group">
+          <label for="select-model-a" style="color:#1a8cff;">Model A (B=0):</label>
+          <select id="select-model-a"></select>
+        </div>
+        <div class="ctl-group">
+          <label for="select-model-b" style="color:#ff5500;">Model B (B=1):</label>
+          <select id="select-model-b"></select>
+        </div>
+      </div>
+
+      <!-- Row 2: Control Field Presets & Morph Slider -->
+      <div class="ctl-row">
+        <span style="font-weight:600; color:var(--text-soft);">Interpolation Preset:</span>
+        <div class="btn-group">
+          <button id="btn-ramp" title="Smooth linear horizontal gradient from Model A on left to Model B on right">🌈 Ramp (A &rarr; B)</button>
+          <button id="btn-split" title="Sharp 50/50 split down the middle">🌓 Split 50/50</button>
+          <button id="btn-circle" title="Circular island of Model B in center of Model A">🎯 Circle Island</button>
+          <button id="btn-clear-b" title="Set whole world to 100% Model A">🧹 Clear to A</button>
+        </div>
+        <div class="ctl-group" style="margin-left:auto;">
+          <label for="uniform-blend-slider">Uniform Morph &alpha;:</label>
+          <input type="range" id="uniform-blend-slider" min="0" max="1" step="0.01" value="0.5">
+          <span id="blend-val" style="min-width:32px; font-family:monospace;">50%</span>
+        </div>
+      </div>
+
+      <!-- Row 3: Brush Tools -->
+      <div class="ctl-row">
+        <span style="font-weight:600; color:var(--text-soft);">Canvas Brush:</span>
+        <div class="btn-group">
+          <button id="brush-model-b" class="active-brush" title="Click and drag to paint territory for Model B">🖌️ Paint Model B (B=1)</button>
+          <button id="brush-model-a" title="Click and drag (or Right-Click) to paint territory for Model A">🖌️ Paint Model A (B=0)</button>
+          <button id="brush-damage" title="Click and drag to erase living cells (wound/damage)">✂️ Damage / Cut</button>
+        </div>
+        <div class="ctl-group">
+          <label for="brush-radius">Radius:</label>
+          <input type="range" id="brush-radius" min="2" max="25" step="1" value="8">
+          <span id="brush-radius-val" style="min-width:30px; font-family:monospace;">8px</span>
+        </div>
+        <div class="ctl-group">
+          <label><input type="checkbox" id="overlay-toggle" checked> Show Field Overlay</label>
+          <input type="range" id="overlay-opacity" min="0.05" max="0.6" step="0.05" value="0.25" style="width:70px;" title="Overlay opacity">
+        </div>
+      </div>
+
+      <!-- Row 4: Simulation Actions & Pure Noise -->
+      <div class="ctl-row">
+        <div class="btn-group">
+          <button id="btn-noise" class="noise-action" title="Seed the grid with uniform random noise — watch organisms spontaneously condense!">🎲 Fill Pure Noise</button>
+          <button id="btn-seeds" class="primary-action" title="Plant seed blobs for Model A and Model B">🌱 Plant Dual Seeds</button>
+          <button id="btn-clear-state" class="danger-action" title="Zero out all channels">🧼 Clear Grid</button>
+          <button id="pause-btn" style="padding:0.38rem 0.9rem;">⏸ Pause</button>
+          <button id="btn-step" title="Advance by 1 step">⏭ Step</button>
+        </div>
+        <div class="ctl-group" style="margin-left:auto;">
+          <label for="speed-slider">Speed:</label>
+          <input type="range" id="speed-slider" min="1" max="8" step="1" value="2" style="width:75px;">
+          <span id="speed-val" style="min-width:18px; font-family:monospace;">2</span>
+          <label style="margin-left:8px;"><input type="checkbox" id="alive-mask-toggle" checked> Alive Mask</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Interactive Simulation Canvas -->
+    <div class="demo-canvas-wrap">
+      <canvas id="demo-canvas" width="96" height="96"></canvas>
+    </div>
+
+    <div id="demo-status">Loading model weights…</div>
+
+    <!-- Live Dynamic Kernel Inspector HUD -->
+    <div class="inspector-card">
+      <div class="inspector-title">
+        <span>🔬 Live Dynamic Kernel Inspector (hover mouse over grid)</span>
+        <span class="inspector-readout" id="hud-readout">Hover over canvas to inspect dynamic kernels</span>
+      </div>
+      
+      <div class="kernel-strip-row">
+        <!-- Model A Kernel -->
+        <div class="kernel-strip-col">
+          <div class="kernel-col-label" style="color:#4db8ff;">Model A 5&times;5 Kernel ($K_A$)</div>
+          <canvas id="kernel-canvas-a" width="100" height="100"></canvas>
+          <div class="basis-meter-wrap">
+            <div class="basis-meter-label"><span>Edge</span><span>Lap</span></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-a-0"></div></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-a-1" style="background:#66dd66;"></div></div>
+            <div class="basis-meter-label"><span>Ring</span><span>Orth</span></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-a-2" style="background:#ffaa00;"></div></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-a-3" style="background:#ff5555;"></div></div>
+          </div>
+        </div>
+
+        <!-- Blended Kernel -->
+        <div class="kernel-strip-col">
+          <div class="kernel-col-label" style="color:#d98874;">Blended 5&times;5 Kernel ($K_{\text{blend}}$)</div>
+          <canvas id="kernel-canvas-blend" width="100" height="100"></canvas>
+          <div style="font-size:0.72rem; color:#888; margin-top:0.4rem; max-width:110px;">
+            $(1-B) K_A + B K_B$
+          </div>
+        </div>
+
+        <!-- Model B Kernel -->
+        <div class="kernel-strip-col">
+          <div class="kernel-col-label" style="color:#ff8844;">Model B 5&times;5 Kernel ($K_B$)</div>
+          <canvas id="kernel-canvas-b" width="100" height="100"></canvas>
+          <div class="basis-meter-wrap">
+            <div class="basis-meter-label"><span>Edge</span><span>Lap</span></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-b-0"></div></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-b-1" style="background:#66dd66;"></div></div>
+            <div class="basis-meter-label"><span>Ring</span><span>Orth</span></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-b-2" style="background:#ffaa00;"></div></div>
+            <div class="basis-meter"><div class="basis-bar" id="basis-b-3" style="background:#ff5555;"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <figcaption>
+      <b>Two Dynamic Kernel models, one shared world.</b> Both models share the exact same 16-channel state grid.
+      At every step, each cell evaluates its local dynamic spatial filters, queries both models for update proposals,
+      and applies a blended step weighted by the painted control field $B(x, y)$. Hovering your mouse over any cell
+      displays the synthesized 5&times;5 perception kernels and active basis mixture weights in real time.
+    </figcaption>
+
+    <p class="demo-legend" style="margin-top:1.4rem">
+      More demos: 
+      <a href="demo_modulation.html">channel-modulated lenia kernels &harr;</a> &middot; 
+      <a href="demo_coexist.html">two organisms, one world &harr;</a> &middot; 
+      <a href="demo_steer.html">glider steering &harr;</a>
+    </p>
+  </figure>
+</div>
+
+<div class="article-column">
+  <h2>How It Works</h2>
+  <p>
+    Standard Neural Cellular Automata use fixed $3\times3$ Sobel filters for spatial perception.
+    In contrast, our <strong>Dynamic Layer-Modulated Kernel NCA</strong> evaluates a dynamic mixture of
+    basis filters (directional derivatives, Laplacian rings, and center-surround diffusions) at each cell:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.85rem;">
+&alpha;<sub>m</sub>(y, x) = Softmax( Conv2d<sub>3&times;3</sub>(state, W<sub>surround</sub>) + W<sub>x</sub> x̄ + W<sub>h</sub> h̄ )
+K<sub>eff</sub>(y, x) = &sum;<sub>m</sub> &alpha;<sub>m</sub>(y, x) &middot; Basis<sub>m</sub></pre>
+  <p>
+    This allows the organism to employ completely different spatial filters along its outer perimeter
+    (boundary preservation and edge detection), deep inside its body (stabilizing diffusion), and across empty space.
+  </p>
+
+  <h3>The Spatial Interpolation Trick</h3>
+  <p>
+    Because both models operate on identical 16-channel representations ($C=16, HN=128$), their proposed updates
+    $dx_A$ and $dx_B$ exist in the same vector space. A scalar control field $B(x, y) \in [0, 1]$ smoothly interpolates
+    between them:
+  </p>
+  <pre style="background:var(--bg-figure); border:1px solid var(--cell-border); border-radius:6px; padding:0.9rem 1.1rem; overflow-x:auto; font-size:0.85rem;">
+dx(x, y) = (1 - B(x, y)) &middot; dx<sub>A</sub>(x, y) + B(x, y) &middot; dx<sub>B</sub>(x, y)
+x(x, y) &larr; x(x, y) + fire &middot; dx(x, y)</pre>
+
+  <h3>Spontaneous Nucleation from Pure Noise</h3>
+  <p>
+    The new emoji models were trained on GPU from <strong>pure random noise</strong> rather than an artificial single seed pixel.
+    Clicking <strong>Fill Pure Noise</strong> fills the grid with chaotic random values. Over the course of 50&ndash;100 steps,
+    you will observe the left side spontaneously condense into Model A (e.g. Fire) while the right side condenses into Model B (e.g. Rocket),
+    with an active morphological battle and chimera frontier along the interpolation boundary!
+  </p>
+</div>
+
+<footer>
+  <div class="article-column">
+    <p>
+      Model weights are read directly from the static deployment in <a href="runs.json">runs.json</a>.
+      Inspect all trained models and timelapses in the <a href="lenia.html">Run Gallery</a>.
+    </p>
+    <a href="lenia.html">&larr; Run gallery</a> &middot;
+    <a href="research.html">Research log &rarr;</a>
+  </div>
+</footer>
+
+<script type="module" src="demo_dynkernel.js"></script>
+</body>
+</html>
