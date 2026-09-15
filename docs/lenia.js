@@ -119,52 +119,70 @@ function mergeSteps(dst, src) {
 }
 
 async function listLeniaRuns(onPage) {
-    // Two-stage listing so we never page the whole bucket in one flat walk:
-    //   1. ONE delimiter listing of every top-level directory (prefix=''),
-    //      minus the known non-run prefixes;
-    //   2. one per-run listing for its files, streamed as each arrives.
-    const dirs = [];
-    let pageToken = null;
-    do {
-        const dirRes = await fetch(
-            `${API_BASE}/o` +
-            `?prefix=&delimiter=/&fields=prefixes,nextPageToken&maxResults=1000` +
-            (pageToken ? `&pageToken=${pageToken}` : ''));
-        if (!dirRes.ok) throw new Error(`bucket dir list failed: ${dirRes.status}`);
-        const dd = await dirRes.json();
-        (dd.prefixes || []).forEach(p => {
-            if (!EXCLUDE_PREFIXES.includes(p)) dirs.push(p.slice(0, -1));
-        });
-        pageToken = dd.nextPageToken;
-    } while (pageToken);
-
     const runs = {};
-    await Promise.all(dirs.map(async run => {
-        const res = await fetch(
-            `${API_BASE}/o` +
-            `?prefix=${encodeURIComponent(run + '/')}` +
-            `&fields=items(name,updated)&maxResults=1000`);
-        if (!res.ok) return;
-        const d = await res.json();
-        const r = {
-            streams: {},   // TAG -> ascending snapshot steps
-            hasTarget: false, hasRunJson: false, hasCode: false, updated: ''
-        };
-        (d.items || []).forEach(({name, updated}) => {
-            const fname = name.slice(run.length + 1);
-            if (updated && updated > r.updated) r.updated = updated;
-            const m = fname.match(/^([A-Z]+)_(\d+)\.png$/);
-            if (m) {
-                const step = parseInt(m[2], 10);
-                if (!isNaN(step)) (r.streams[m[1]] || (r.streams[m[1]] = [])).push(step);
-            } else if (fname === 'target.png') r.hasTarget = true;
-            else if (fname === 'run.json') r.hasRunJson = true;
-            else if (fname === 'code.tgz') r.hasCode = true;
-        });
-        Object.values(r.streams).forEach(a => a.sort((x, y) => x - y));
-        runs[run] = r;
-        if (onPage) onPage(runs);   // stream cards as each run's listing lands
-    }));
+
+    // 1. Load static bundled runs if available (e.g. GitHub Pages / static deployment)
+    try {
+        const localRes = await fetch('runs.json?t=' + Date.now());
+        if (localRes.ok) {
+            const staticRuns = await localRes.json();
+            Object.assign(runs, staticRuns);
+            if (onPage) onPage(runs);
+        }
+    } catch (e) {
+        console.warn('Could not load static runs.json', e);
+    }
+
+    // 2. Query cloud / API_BASE if configured
+    try {
+        const dirs = [];
+        let pageToken = null;
+        do {
+            const dirRes = await fetch(
+                `${API_BASE}/o` +
+                `?prefix=&delimiter=/&fields=prefixes,nextPageToken&maxResults=1000` +
+                (pageToken ? `&pageToken=${pageToken}` : ''));
+            if (!dirRes.ok) break;
+            const dd = await dirRes.json();
+            (dd.prefixes || []).forEach(p => {
+                if (!EXCLUDE_PREFIXES.includes(p)) dirs.push(p.slice(0, -1));
+            });
+            pageToken = dd.nextPageToken;
+        } while (pageToken);
+
+        await Promise.all(dirs.map(async run => {
+            const res = await fetch(
+                `${API_BASE}/o` +
+                `?prefix=${encodeURIComponent(run + '/')}` +
+                `&fields=items(name,updated)&maxResults=1000`);
+            if (!res.ok) return;
+            const d = await res.json();
+            const r = {
+                streams: {},   // TAG -> ascending snapshot steps
+                hasTarget: false, hasRunJson: false, hasCode: false, updated: '',
+                dir: BUCKET_BASE + run + '/'
+            };
+            (d.items || []).forEach(({name, updated}) => {
+                const fname = name.slice(run.length + 1);
+                if (updated && updated > r.updated) r.updated = updated;
+                const m = fname.match(/^([A-Z]+)_(\d+)\.png$/);
+                if (m) {
+                    const step = parseInt(m[2], 10);
+                    if (!isNaN(step)) (r.streams[m[1]] || (r.streams[m[1]] = [])).push(step);
+                } else if (fname === 'target.png') r.hasTarget = true;
+                else if (fname === 'run.json') r.hasRunJson = true;
+                else if (fname === 'code.tgz') r.hasCode = true;
+            });
+            Object.values(r.streams).forEach(a => a.sort((x, y) => x - y));
+            if (!runs[run] || (r.updated && r.updated > (runs[run].updated || ''))) {
+                runs[run] = r;
+            }
+            if (onPage) onPage(runs);
+        }));
+    } catch (e) {
+        console.warn('Cloud bucket listing failed or skipped', e);
+    }
+
     return runs;
 }
 
@@ -172,7 +190,7 @@ function leniaMethodsFrom(runs) {
     return Object.keys(runs).sort().map(run => ({
         id: 'lenia_' + run,
         title: run,
-        dir: BUCKET_BASE + run + '/',
+        dir: runs[run].dir || (BUCKET_BASE + run + '/'),
         desc: '',
         tags: [],
         streams: runs[run].streams,
@@ -1243,7 +1261,10 @@ async function activateOrCollapseLive(tr) {
 
     tr.liveStatusObj.innerText = 'loading weights…';
     try {
-        const res = await fetch(tr.dir + 'weights.json?t=' + Date.now());
+        let res = await fetch(tr.dir + 'weights.json?t=' + Date.now());
+        if (!res.ok) {
+            res = await fetch('weights/' + tr.title + '.json?t=' + Date.now());
+        }
         if (!res.ok) {
             tr.liveStatusObj.innerText = 'weights not exported yet';
             return;

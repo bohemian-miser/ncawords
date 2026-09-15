@@ -18,21 +18,39 @@ let cloudModels = {};
 
 async function listCloudWeights() {
     const found = {};
-    let pageToken = null;
-    do {
-        const res = await fetch(BUCKET_LIST + (pageToken ? `&pageToken=${pageToken}` : ''));
-        if (!res.ok) throw new Error(`bucket list failed: ${res.status}`);
-        const d = await res.json();
-        (d.items || []).forEach(({name, updated}) => {
-            const i = name.indexOf('/');
-            if (i < 0) return;
-            const run = name.slice(0, i), fname = name.slice(i + 1);
-            if (!found[run]) found[run] = { url: null, updated: '' };
-            if (fname === 'weights.json') found[run].url = BUCKET_BASE + run + '/weights.json';
-            if (updated && updated > found[run].updated) found[run].updated = updated;
-        });
-        pageToken = d.nextPageToken;
-    } while (pageToken);
+
+    // 1. Check static models.json bundled with the site
+    try {
+        const localRes = await fetch('models.json?t=' + Date.now());
+        if (localRes.ok) {
+            const staticModels = await localRes.json();
+            Object.assign(found, staticModels);
+        }
+    } catch (e) {
+        /* static models.json unavailable */
+    }
+
+    // 2. Query cloud GCS bucket if accessible
+    try {
+        let pageToken = null;
+        do {
+            const res = await fetch(BUCKET_LIST + (pageToken ? `&pageToken=${pageToken}` : ''));
+            if (!res.ok) break;
+            const d = await res.json();
+            (d.items || []).forEach(({name, updated}) => {
+                const i = name.indexOf('/');
+                if (i < 0) return;
+                const run = name.slice(0, i), fname = name.slice(i + 1);
+                if (!found[run]) found[run] = { url: null, updated: '' };
+                if (fname === 'weights.json') found[run].url = BUCKET_BASE + run + '/weights.json';
+                if (updated && updated > found[run].updated) found[run].updated = updated;
+            });
+            pageToken = d.nextPageToken;
+        } while (pageToken);
+    } catch (e) {
+        /* cloud list unavailable */
+    }
+
     Object.entries(found).forEach(([run, v]) => {
         if (v.url) cloudModels[run] = v;
     });
@@ -49,7 +67,8 @@ function initializeDropdown() {
         .forEach(run => {
             const opt = document.createElement('option');
             opt.value = cloudModels[run].url;
-            opt.innerText = '☁ ' + run;
+            const isLocal = cloudModels[run].url.startsWith('runs/');
+            opt.innerText = (isLocal ? '★ ' : '☁ ') + run;
             selectBox.appendChild(opt);
         });
     if (prev && [...selectBox.options].some(o => o.value === prev)) selectBox.value = prev;

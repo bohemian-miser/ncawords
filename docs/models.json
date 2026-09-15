@@ -1,0 +1,114 @@
+{
+  "snaps_lenia_dynkernel5x5_alien_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_alien_noise/weights.json",
+    "updated": "2026-09-05T13:50:57Z"
+  },
+  "snaps_lenia_dynkernel5x5_butterfly_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_butterfly_noise/weights.json",
+    "updated": "2026-09-05T13:50:59Z"
+  },
+  "snaps_lenia_dynkernel5x5_dots": {
+    "url": "runs/snaps_lenia_dynkernel5x5_dots/weights.json",
+    "updated": "2026-09-04T11:22:20Z"
+  },
+  "snaps_lenia_dynkernel5x5_dots_v2": {
+    "url": "runs/snaps_lenia_dynkernel5x5_dots_v2/weights.json",
+    "updated": "2026-09-04T17:01:35Z"
+  },
+  "snaps_lenia_dynkernel5x5_fire": {
+    "url": "runs/snaps_lenia_dynkernel5x5_fire/weights.json",
+    "updated": "2026-09-04T11:54:48Z"
+  },
+  "snaps_lenia_dynkernel5x5_fire_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_fire_noise/weights.json",
+    "updated": "2026-09-05T19:01:06Z"
+  },
+  "snaps_lenia_dynkernel5x5_fire_v2": {
+    "url": "runs/snaps_lenia_dynkernel5x5_fire_v2/weights.json",
+    "updated": "2026-09-04T16:52:07Z"
+  },
+  "snaps_lenia_dynkernel5x5_gecko_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_gecko_noise/weights.json",
+    "updated": "2026-09-05T19:08:35Z"
+  },
+  "snaps_lenia_dynkernel5x5_heart_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_heart_noise/weights.json",
+    "updated": "2026-09-05T19:08:38Z"
+  },
+  "snaps_lenia_dynkernel5x5_hex": {
+    "url": "runs/snaps_lenia_dynkernel5x5_hex/weights.json",
+    "updated": "2026-09-04T12:24:30Z"
+  },
+  "snaps_lenia_dynkernel5x5_hex_v2": {
+    "url": "runs/snaps_lenia_dynkernel5x5_hex_v2/weights.json",
+    "updated": "2026-09-04T17:11:16Z"
+  },
+  "snaps_lenia_dynkernel5x5_rocket_noise": {
+    "url": "runs/snaps_lenia_dynkernel5x5_rocket_noise/weights.json",
+    "updated": "2026-09-05T19:01:08Z"
+  },
+  "snaps_lenia_dynkernel5x5_rocket_v2": {
+    "url": "runs/snaps_lenia_dynkernel5x5_rocket_v2/weights.json",
+    "updated": "2026-09-04T17:17:17Z"
+  },
+  "snaps_lenia_kernel5x5_dots_ring": {
+    "url": "runs/snaps_lenia_kernel5x5_dots_ring/weights.json",
+    "updated": "2026-09-04T10:50:01Z"
+  },
+  "snaps_lenia_kernel5x5_fire": {
+    "url": "runs/snaps_lenia_kernel5x5_fire/weights.json",
+    "updated": "2026-09-04T10:31:16Z"
+  },
+  "snaps_lenia_kernel_comp": {
+    "url": "runs/snaps_lenia_kernel_comp/weights.json",
+    "updated": "2026-09-04T10:12:23Z"
+  },
+  "snaps_lenia_kernel_dots": {
+    "url": "runs/snaps_lenia_kernel_dots/weights.json",
+    "updated": "2026-09-03T12:42:50Z"
+  },
+  "snaps_lenia_kernel_dots_ring": {
+    "url": "runs/snaps_lenia_kernel_dots_ring/weights.json",
+    "updated": "2026-09-03T12:48:41Z"
+  },
+  "snaps_lenia_kernel_fire": {
+    "url": "runs/snaps_lenia_kernel_fire/weights.json",
+    "updated": "2026-09-03T14:50:00Z"
+  },
+  "snaps_lenia_kernel_fire_ring": {
+    "url": "runs/snaps_lenia_kernel_fire_ring/weights.json",
+    "updated": "2026-09-03T18:20:39Z"
+  },
+  "snaps_lenia_kernel_hex": {
+    "url": "runs/snaps_lenia_kernel_hex/weights.json",
+    "updated": "2026-09-03T12:54:18Z"
+  },
+  "snaps_lenia_kernel_rocket": {
+    "url": "runs/snaps_lenia_kernel_rocket/weights.json",
+    "updated": "2026-09-03T18:36:10Z"
+  },
+  "snaps_lenia_pool_multik_dots": {
+    "url": "runs/snaps_lenia_pool_multik_dots/weights.json",
+    "updated": "2026-09-03T09:51:14Z"
+  },
+  "snaps_lenia_pool_multik_fire": {
+    "url": "runs/snaps_lenia_pool_multik_fire/weights.json",
+    "updated": "2026-09-03T10:39:42Z"
+  },
+  "snaps_lenia_pool_multik_hex": {
+    "url": "runs/snaps_lenia_pool_multik_hex/weights.json",
+    "updated": "2026-09-03T10:01:29Z"
+  },
+  "snaps_lenia_pool_multik_rocket": {
+    "url": "runs/snaps_lenia_pool_multik_rocket/weights.json",
+    "updated": "2026-09-03T10:47:25Z"
+  },
+  "snaps_lenia_pool_sharedk_dots": {
+    "url": "runs/snaps_lenia_pool_sharedk_dots/weights.json",
+    "updated": "2026-09-03T10:13:38Z"
+  },
+  "snaps_lenia_pool_sharedk_hex": {
+    "url": "runs/snaps_lenia_pool_sharedk_hex/weights.json",
+    "updated": "2026-09-03T10:25:21Z"
+  }
+}
